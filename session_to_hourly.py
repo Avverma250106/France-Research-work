@@ -1,20 +1,8 @@
-"""
-Step 2: Convert unified sessions into a non-overlapping hourly demand series,
-using time-weighted proportional energy splitting so multi-hour sessions don't
-get dumped entirely into their start hour (the "overlap" problem).
-"""
-
 import pandas as pd
 import numpy as np
 
 
 def split_session_energy(row, freq="h"):
-    """Allocate one session's energy_kwh across every hourly bin its active
-    charging window overlaps, weighted by the number of minutes of overlap.
-
-    Returns a list of dicts: {entity, hour, kwh_allocated}
-    entity = (source_dataset, station_id) so stations are never mixed.
-    """
     start = row["connect_time_utc"]
     end = row["charge_end_time_utc"]
     kwh = row["energy_kwh"]
@@ -47,16 +35,6 @@ def split_session_energy(row, freq="h"):
 
 
 def sessions_to_hourly(sessions: pd.DataFrame, freq: str = "h") -> pd.DataFrame:
-    """Apply the proportional split to every session and aggregate to
-    (source_dataset, entity_id, hour) totals.
-
-    entity_id is the modeling granularity chosen in harmonize.py: per-station
-    for ACN, network-level for ElaadNL (see note there). All energy from
-    overlapping sessions on the SAME entity in the SAME hour is summed here;
-    since each session's own total is conserved exactly across its own bins
-    (validated in validate_split), summing multiple sessions' allocations for
-    one entity/hour is correct, not double-counting.
-    """
     all_records = []
     for _, row in sessions.iterrows():
         all_records.extend(split_session_energy(row, freq=freq))
@@ -70,9 +48,6 @@ def sessions_to_hourly(sessions: pd.DataFrame, freq: str = "h") -> pd.DataFrame:
 
 
 def validate_split(sessions: pd.DataFrame, hourly: pd.DataFrame, tol=1e-6):
-    """Sanity check: total energy per entity in the hourly table must equal
-    total energy per entity in the original sessions table. Run this before
-    trusting anything downstream."""
     original_totals = sessions.groupby("entity_id")["energy_kwh"].sum()
     split_totals = hourly.groupby("entity_id")["kwh_allocated"].sum()
     diff = (original_totals - split_totals).abs()
@@ -86,9 +61,6 @@ def validate_split(sessions: pd.DataFrame, hourly: pd.DataFrame, tol=1e-6):
 
 
 def reindex_continuous(hourly: pd.DataFrame, freq: str = "h") -> pd.DataFrame:
-    """Reindex each (source_dataset, entity_id) series to a continuous hourly
-    grid spanning its own observed date range, filling true zero-demand hours
-    with 0 (not NaN, not dropped)."""
     filled_parts = []
     for (source, entity), group in hourly.groupby(["source_dataset", "entity_id"]):
         full_range = pd.date_range(group["hour"].min(), group["hour"].max(), freq=freq)

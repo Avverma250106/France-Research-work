@@ -11,9 +11,7 @@ clean_features/
 
 # Internal review documents — kept local, not shared in the repo
 MODEL_REVIEW.md
-DEMO.md
 MODEL_CHANGES_BEFORE_DEMO.pdf
-DEMO_GUIDE.pdf
 
 .claude/
 __pycache__/

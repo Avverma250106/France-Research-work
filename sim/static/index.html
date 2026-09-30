@@ -20,9 +20,10 @@ body{background:var(--bg);color:var(--ink);font-family:var(--disp);overflow:hidd
 #app{display:grid;grid-template-columns:1fr 372px;height:100vh}
 @media (max-width:900px){#app{grid-template-columns:1fr;grid-template-rows:1fr 46vh}}
 .mapwrap{position:relative;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden}
-#map{position:absolute;inset:0;background:var(--sunk)}
-.site-tag{font-family:var(--mono);font-size:10px;color:var(--ink);background:rgba(16,19,9,.82);
-  border:1px solid var(--rule);border-radius:2px;padding:2px 5px;white-space:nowrap;
+#map{position:absolute;inset:0;background:#E8EAE2}
+.site-tag{font-family:var(--mono);font-size:10px;font-weight:600;color:#1C2019;background:rgba(255,255,255,.92);
+  border:1px solid rgba(28,32,25,.35);border-radius:3px;padding:2px 6px;white-space:nowrap;
+  box-shadow:0 1px 3px rgba(0,0,0,.18);
   transform:translateY(14px);pointer-events:none}
 
 .rail{background:var(--panel);border-left:1px solid var(--rule);display:flex;flex-direction:column;overflow:hidden}
@@ -80,11 +81,11 @@ tbody tr:last-child td{border-bottom:none}
   <div class="mapwrap">
     <div id="map"></div>
     <div class="legend">
-      <div class="row"><span class="dot" style="background:var(--hydro)"></span>site (model predicts here)</div>
-      <div class="row"><span class="dot" style="background:#8a9384"></span>charge point</div>
-      <div class="row"><span class="dot" style="background:var(--road)"></span>driving to charge</div>
-      <div class="row"><span class="dot" style="background:var(--ok)"></span>plugged in, charging</div>
-      <div class="row"><span class="dot" style="background:var(--hydro)"></span>finished, driving away</div>
+      <div class="row"><span class="dot" style="background:#1B6E93;box-shadow:0 0 0 1.5px #fff"></span>site (model predicts here)</div>
+      <div class="row"><span class="dot" style="background:#4E5749"></span>charge point</div>
+      <div class="row"><span class="dot" style="background:#C4551A"></span>driving to charge</div>
+      <div class="row"><span class="dot" style="background:#1E7A43"></span>plugged in, charging</div>
+      <div class="row"><span class="dot" style="background:#1B6E93"></span>finished, driving away</div>
     </div>
   </div>
 
@@ -163,17 +164,28 @@ const IGN = "https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTi
   + "&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM"
   + "&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png";
 
+// IGN is the authoritative French basemap but its tiles take 2-3s each, which
+// leaves blank patches while panning. This fast layer sits underneath so the
+// map is never empty; IGN paints over it as it arrives.
+const BASE = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png";
+
 const map = new maplibregl.Map({
   container: "map",
   style: {
     version: 8,
     sources: {
-      ign: { type: "raster", tiles: [IGN], tileSize: 256,
-             attribution: "IGN Géoplateforme · synthetic stations & vehicles" }
+      base: { type: "raster", tiles: [BASE], tileSize: 256, maxzoom: 19,
+              attribution: "© OpenStreetMap contributors © CARTO" },
+      ign:  { type: "raster", tiles: [IGN], tileSize: 256, maxzoom: 19,
+              attribution: "IGN Géoplateforme · synthetic stations & vehicles" }
     },
     layers: [
-      { id: "bg", type: "background", paint: { "background-color": "#101309" } },
-      { id: "ign", type: "raster", source: "ign", paint: { "raster-opacity": 0.82, "raster-saturation": -0.55, "raster-brightness-max": 0.78 } }
+      { id: "bg", type: "background", paint: { "background-color": "#E8EAE2" } },
+      { id: "base", type: "raster", source: "base",
+        paint: { "raster-opacity": 1, "raster-saturation": -0.10 } },
+      { id: "ign", type: "raster", source: "ign",
+        paint: { "raster-opacity": 1, "raster-saturation": -0.08, "raster-contrast": 0.04,
+                 "raster-fade-duration": 250 } }
     ]
   },
   center: [2.317, 48.866], zoom: 10.95, attributionControl: { compact: true }
@@ -191,31 +203,31 @@ map.on("load", () => {
   map.addSource("routes", { type: "geojson", data: empty() });
 
   map.addLayer({ id: "routes", type: "line", source: "routes",
-    paint: { "line-color": "#E0904F", "line-width": 1.1, "line-opacity": 0.22 } });
+    paint: { "line-color": "#C4551A", "line-width": 1.2, "line-opacity": 0.3 } });
 
   map.addLayer({ id: "stations", type: "circle", source: "stations", paint: {
     "circle-radius": ["interpolate", ["linear"], ["get", "rated_kw"], 3.7, 3, 50, 6.5],
-    "circle-color": "#8a9384", "circle-opacity": 0.85,
-    "circle-stroke-width": 1, "circle-stroke-color": "#101309" } });
+    "circle-color": "#4E5749", "circle-opacity": 0.9,
+    "circle-stroke-width": 1.1, "circle-stroke-color": "rgba(255,255,255,.85)" } });
 
   map.addLayer({ id: "sites-halo", type: "circle", source: "sites", paint: {
     "circle-radius": ["interpolate", ["linear"], ["get", "actual"], 0, 12, 120, 44],
-    "circle-color": ["interpolate", ["linear"], ["get", "err"], 0, "#74B07E", 8, "#D6A93F", 25, "#DE7A67"],
-    "circle-opacity": 0.20, "circle-blur": 0.35 } });
+    "circle-color": ["interpolate", ["linear"], ["get", "err"], 0, "#2F7D4E", 8, "#B8861F", 25, "#A8301F"],
+    "circle-opacity": 0.26, "circle-blur": 0.3 } });
 
   map.addLayer({ id: "sites", type: "circle", source: "sites", paint: {
     "circle-radius": 7,
-    "circle-color": ["interpolate", ["linear"], ["get", "err"], 0, "#74B07E", 8, "#D6A93F", 25, "#DE7A67"],
-    "circle-stroke-width": 2, "circle-stroke-color": "#68AECE" } });
+    "circle-color": ["interpolate", ["linear"], ["get", "err"], 0, "#2F7D4E", 8, "#B8861F", 25, "#A8301F"],
+    "circle-stroke-width": 2.4, "circle-stroke-color": "#FFFFFF" } });
 
   map.addLayer({ id: "charging", type: "circle", source: "charging", paint: {
-    "circle-radius": 3.2, "circle-color": "#74B07E", "circle-opacity": 0.9,
-    "circle-stroke-width": 1, "circle-stroke-color": "rgba(16,19,9,.85)" } });
+    "circle-radius": 3.4, "circle-color": "#1E7A43", "circle-opacity": 0.95,
+    "circle-stroke-width": 1.1, "circle-stroke-color": "rgba(255,255,255,.9)" } });
 
   map.addLayer({ id: "vehicles", type: "circle", source: "vehicles", paint: {
     "circle-radius": 3.6,
-    "circle-color": ["match", ["get", "k"], "out", "#68AECE", "#E0904F"],
-    "circle-stroke-width": 1, "circle-stroke-color": "rgba(16,19,9,.85)" } });
+    "circle-color": ["match", ["get", "k"], "out", "#1B6E93", "#C4551A"],
+    "circle-stroke-width": 1.1, "circle-stroke-color": "rgba(255,255,255,.9)" } });
 
   ready = true;
   map.resize();
@@ -325,9 +337,11 @@ function onPositions(f) {
       geometry: { type: "Point", coordinates: [v.lon, v.lat] } })) });
   map.getSource("vehicles").setData(pts(f.vehicles));
   map.getSource("charging").setData(pts(f.charging || []));
-  map.getSource("routes").setData({ type: "FeatureCollection",
-    features: (f.routes || []).map(c => ({ type: "Feature", properties: {},
-      geometry: { type: "LineString", coordinates: c } })) });
+  if (f.routes) {
+    map.getSource("routes").setData({ type: "FeatureCollection",
+      features: f.routes.map(c => ({ type: "Feature", properties: {},
+        geometry: { type: "LineString", coordinates: c } })) });
+  }
 }
 
 function connect() {

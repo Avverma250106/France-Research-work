@@ -19,6 +19,7 @@ import pandas as pd
 from . import stations as st
 from . import synth
 from .features_rt import FeatureBuffer
+from .roads import RoadNetwork
 
 SIM_HOUR_WALL_SECONDS = 8.0        # 1 simulated hour per 8 wall seconds
 METRIC_WINDOW = 72                  # rolling window, in simulated hours
@@ -111,6 +112,18 @@ class Engine:
             else pd.Timestamp("2025-01-06 00:00", tz="UTC")
         self.hour_start = self.now.floor("h")
 
+        # Real street routing when the cached road graph is available; the
+        # approximated path is kept as a fallback so the simulation still runs
+        # without it (build it with: python3 -m sim.roads).
+        self.road = RoadNetwork.load()
+        self.routed = self.road is not None
+        # A fixed pool of origins keeps the router's cache hot: the same
+        # (origin, station) pairs recur instead of every trip being unique.
+        self.origins = [
+            [st.CENTRE[0] + r * math.cos(a), st.CENTRE[1] + r * math.sin(a) * 0.7]
+            for a, r in ((i * 2 * math.pi / 24, 0.030 + 0.055 * ((i % 3) / 2.0))
+                         for i in range(24))
+        ]
         self.vehicles = {}
         self.pending = deque()
         self.active = []            # sessions still charging
@@ -125,6 +138,7 @@ class Engine:
             for e in self.entities
         }
         self.sim_hours = 0
+        self.frame = 0
         self.last_frame = None
         self._schedule_hour(self.hour_start)
 
@@ -143,10 +157,15 @@ class Engine:
                 self.pending.append((arrive - pd.Timedelta(minutes=travel), arrive, e))
 
     def _outer_point(self):
-        ang = self.rng.uniform(0, 2 * math.pi)
-        rad = self.rng.uniform(0.03, 0.085)
-        return [st.CENTRE[0] + rad * math.cos(ang),
-                st.CENTRE[1] + rad * math.sin(ang) * 0.7]
+        return list(self.origins[self.rng.integers(len(self.origins))])
+
+    def _path(self, origin, dest):
+        """Street route when the road graph is loaded, approximation otherwise."""
+        if self.road is not None:
+            r = self.road.route(tuple(origin), tuple(dest))
+            if r and len(r) > 2:
+                return r
+        return _street_path(self.rng, list(origin), list(dest))
 
     def _spawn_departure(self, session):
         """A finished session drives away, so the map reflects the whole fleet
@@ -157,7 +176,7 @@ class Engine:
         travel = float(self.rng.uniform(20, 50))
         self.vid += 1
         v = Vehicle(f"o{self.vid}",
-                    _street_path(self.rng, list(xy), self._outer_point()),
+                    self._path(list(xy), self._outer_point()),
                     self.now, self.now + pd.Timedelta(minutes=travel),
                     session.station_id, session.entity_id, None, kind="out")
         self.vehicles[v.id] = v
@@ -172,7 +191,7 @@ class Engine:
                           arrive + pd.Timedelta(hours=dur_h), energy)
 
         self.vid += 1
-        v = Vehicle(f"v{self.vid}", _street_path(self.rng, origin, dest),
+        v = Vehicle(f"v{self.vid}", self._path(origin, dest),
                     depart, arrive, station["id"], entity, session)
         self.vehicles[v.id] = v
 
@@ -282,12 +301,19 @@ class Engine:
     # ---------- fast channel ----------
 
     def positions(self):
+        # Route lines change only when a vehicle spawns or finishes, so they go
+        # out at 1 Hz while positions stream at 10 Hz. Sending both every frame
+        # is ~128 KB/s of geometry that nobody can see change.
+        self.frame += 1
+        send_routes = (self.frame % 10 == 1)
+
         moving, routes = [], []
         for v in self.vehicles.values():
             lon, lat = v.position(self.now)
             moving.append({"id": v.id, "lon": round(lon, 6), "lat": round(lat, 6),
                            "e": v.entity_id, "k": v.kind})
-            routes.append([[round(x, 6), round(y, 6)] for x, y in v.path])
+            if send_routes:
+                routes.append(_thin(v.path))
 
         charging = []
         for s in self.active:
@@ -295,9 +321,22 @@ class Engine:
             if xy and s.connect <= self.now < s.end:
                 charging.append({"lon": round(xy[0], 6), "lat": round(xy[1], 6),
                                  "e": s.entity_id})
-        return {"type": "positions", "sim_time": self.now.isoformat(),
-                "vehicles": moving, "routes": routes, "charging": charging,
-                "n_charging": len(charging)}
+        frame = {"type": "positions", "sim_time": self.now.isoformat(),
+                 "vehicles": moving, "charging": charging,
+                 "n_charging": len(charging)}
+        if send_routes:
+            frame["routes"] = routes
+        return frame
+
+
+def _thin(path, max_pts=36):
+    """Reduce a route to at most max_pts points for transmission."""
+    n = len(path)
+    if n <= max_pts:
+        return [[round(x, 6), round(y, 6)] for x, y in path]
+    step = n / float(max_pts - 1)
+    idx = sorted({int(i * step) for i in range(max_pts - 1)} | {n - 1})
+    return [[round(path[i][0], 6), round(path[i][1], 6)] for i in idx]
 
 
 def _metrics(hist):

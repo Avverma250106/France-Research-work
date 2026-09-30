@@ -13,6 +13,7 @@ Dataset: https://www.kaggle.com/datasets/akshverma1w32/ev-research-dataset
 | `train_for_sim.py` | Trains the model, writes `artifacts/` |
 | `test_parity.py` | Verifies live features match offline features |
 | `sim/` | Live map simulation (FastAPI + MapLibre) |
+| `sim/roads.py` | Builds a local street-routing graph from OpenStreetMap |
 
 ## Simulation
 
@@ -23,7 +24,9 @@ replayed.
 
 ```bash
 pip install -r requirements.txt
-python3 train_for_sim.py && python3 -m uvicorn sim.server:app --port 8008
+python3 train_for_sim.py
+python3 -m sim.roads          # optional: street routing for vehicles
+python3 -m uvicorn sim.server:app --port 8008
 ```
 
 Then open http://localhost:8008.
@@ -37,6 +40,17 @@ it after cloning rather than expecting it in the repo.
 generates a synthetic corpus, so the simulation runs without the real data. The
 UI states which is in use. A synthetic run demonstrates that the pipeline works
 end to end; its error figures are not results.
+
+### Street routing
+
+`python3 -m sim.roads` fetches the drivable road network for central Paris from
+Overpass, contracts it to a junction graph (~4.5k nodes) with the street
+geometry stored on the edges, and caches it in `artifacts/roads.json`. Routing
+then runs locally with networkx — around 10 ms per route, and no dependency on
+an external routing service at demo time.
+
+Without the cache the simulation falls back to approximated paths and still
+runs; `/health` and the `hello` frame both report `routed`.
 
 ### Station coordinates are synthetic
 

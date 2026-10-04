@@ -134,6 +134,7 @@ async def health():
         "vehicles": len(engine.vehicles) if engine else 0,
         "charging": len(engine.active) if engine else 0,
         "data_source": state["model"].data_source if state["model"] else None,
+        "target_mode": state["model"].target_mode if state["model"] else None,
     })
 
 
@@ -145,6 +146,7 @@ async def meta():
     m = model.meta
     return JSONResponse({
         "data_source": model.data_source,
+        "target_mode": model.target_mode,
         "sites": engine.sites,
         "stations": engine.stations,
         "n_features": m.get("n_features"),
@@ -174,6 +176,7 @@ async def ws_endpoint(ws: WebSocket):
             "sites": engine.sites,
             "stations": engine.stations,
             "data_source": state["model"].data_source,
+            "target_mode": state["model"].target_mode,
             "sim_hour_wall_seconds": SIM_HOUR_WALL_SECONDS,
             "routed": engine.routed,
         }))

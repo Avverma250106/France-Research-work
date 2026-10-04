@@ -15,12 +15,13 @@ import pandas as pd
 import holidays
 
 TARGET = "kwh_allocated"
+TARGET_MODE = "nowcast"
 
-# From hurdle_model_cv.ipynb. entity_id is dropped here, so the three ACN sites
-# share one representation.
-DROP_COLUMNS = ["hour", "kwh_allocated", "entity_id", "site"]
+# The model learns per entity, so keep entity_id as a categorical input rather
+# than collapsing all sites into one representation.
+DROP_COLUMNS = ["hour", "kwh_allocated", "target", "site"]
 
-CATEGORICAL_COLS = ["source_dataset", "region"]
+CATEGORICAL_COLS = ["source_dataset", "region", "entity_id"]
 
 TZ_MAP = {
     "California": "America/Los_Angeles",
@@ -153,10 +154,21 @@ def add_lag_and_rolling_features(df):
     return df
 
 
-def build_feature_table(hourly_reindexed, sessions):
+def build_feature_table(hourly_reindexed, sessions, target_mode=TARGET_MODE):
     df = add_temporal_features(hourly_reindexed)
     df = add_session_count_features(df, sessions)
     df = add_lag_and_rolling_features(df)
+    if target_mode not in {"nowcast", "forecast"}:
+        raise ValueError(f"Unsupported target_mode={target_mode!r}; expected 'nowcast' or 'forecast'.")
+    if target_mode == "forecast":
+        df = df.sort_values(["source_dataset", "entity_id", "hour"]).copy()
+        df["target"] = (
+            df.groupby(["source_dataset", "entity_id"], sort=False)[TARGET]
+            .shift(-1)
+            .reset_index(drop=True)
+        )
+    else:
+        df["target"] = df[TARGET]
     return df
 
 
@@ -165,8 +177,9 @@ def entity_stats_from(train_df):
 
     Persisted alongside the model so that serving reproduces training exactly.
     """
+    target_col = "target" if "target" in train_df.columns else TARGET
     stats = (
-        train_df.groupby("entity_id")[TARGET]
+        train_df.groupby("entity_id")[target_col]
         .agg(entity_mean_kwh="mean", entity_std_kwh="std", entity_max_kwh="max")
         .reset_index()
     )
@@ -197,12 +210,17 @@ def design_matrix(df, columns=None):
     return X.astype(float)
 
 
-def hurdle_predict(clf, reg, X, charge_threshold=0.5):
-    """The notebook's prediction rule: hard threshold x magnitude.
+def hurdle_predict(clf, reg, X, charge_threshold=0.5, return_thresholded=False):
+    """Return the mean-oriented expected load for the hurdle model.
 
-    Returns (prediction, charge probability).
+    The model predicts P(charge) and the expected positive load magnitude.
+    For mean-oriented metrics (RMSE, R^2), the correct estimator is
+    probability * magnitude, not a hard threshold times magnitude.
     """
     charge_prob = clf.predict_proba(X)[:, 1]
-    will_charge = (charge_prob >= charge_threshold).astype(int)
     magnitude = np.clip(reg.predict(X), 0, None)
-    return will_charge * magnitude, charge_prob
+    expected_load = charge_prob * magnitude
+    thresholded = (charge_prob >= charge_threshold).astype(int) * magnitude
+    if return_thresholded:
+        return thresholded, charge_prob
+    return expected_load, charge_prob

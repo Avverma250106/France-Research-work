@@ -261,12 +261,27 @@ def design_matrix(df, columns=None):
     return X.astype(float)
 
 
-def hurdle_predict(clf, reg, X, charge_threshold=0.5):
-    """The notebook's prediction rule: hard threshold x magnitude.
+def hurdle_predict(clf, reg, X, charge_threshold=0.5, rule="threshold"):
+    """Combine the hurdle's two stages into one prediction.
+
+    Two rules, because one point forecast cannot be optimal for both metrics:
+
+      "threshold"  1{p >= charge_threshold} * magnitude
+                   Minimises L1-style error. This is what the experiment
+                   programme tuned (threshold selected on validation), and is
+                   the default so saved artifacts keep their behaviour.
+
+      "expected"   p * magnitude
+                   The conditional mean, which is the minimum-MSE point
+                   forecast. Report this when scoring RMSE or R2.
 
     Returns (prediction, charge probability).
     """
+    if rule not in ("threshold", "expected"):
+        raise ValueError(f"Unknown hurdle rule {rule!r}; use 'threshold' or 'expected'.")
     charge_prob = clf.predict_proba(X)[:, 1]
-    will_charge = (charge_prob >= charge_threshold).astype(int)
     magnitude = np.clip(reg.predict(X), 0, None)
+    if rule == "expected":
+        return charge_prob * magnitude, charge_prob
+    will_charge = (charge_prob >= charge_threshold).astype(int)
     return will_charge * magnitude, charge_prob

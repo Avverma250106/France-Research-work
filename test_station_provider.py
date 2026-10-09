@@ -224,7 +224,7 @@ def test_dataset_metadata_maps_to_the_matching_city_and_profile():
         "boulder": ("Boulder, Colorado, United States", "boulder"),
         "palo_alto": ("Palo Alto, California, United States", "palo_alto"),
         "dundee": ("Dundee, Scotland, United Kingdom", "dundee"),
-        "perth": ("Perth, Western Australia, Australia", "perth"),
+        "perth": ("Perth, Perth and Kinross, Scotland, United Kingdom", "perth"),
     }
     for dataset, (place_query, entity_id) in expected.items():
         config = station_provider.DATASET_CONFIG[dataset]

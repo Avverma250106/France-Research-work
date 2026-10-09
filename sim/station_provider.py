@@ -78,24 +78,32 @@ DATASET_CONFIG = {
         "location_note": "Dundee-area stations; demand remains site-profile level.",
     },
     "perth": {
-        "label": "Perth, Western Australia",
-        "region": "Australia",
-        "timezone": "Australia/Perth",
-        "place_query": "Perth, Western Australia, Australia",
-        "country_code": "au",
+        "label": "Perth & Kinross, Scotland, UK",
+        "region": "UK",
+        "timezone": "Europe/London",
+        "place_query": "Perth, Perth and Kinross, Scotland, United Kingdom",
+        "country_code": "gb",
         "profile_file": "perth_sessions.csv",
         "profile_entity_id": "perth",
-        "location_note": "Perth-area stations; demand remains site-profile level.",
+        "location_note": (
+            "Perth & Kinross, SCOTLAND - not Perth, Western Australia. The "
+            "upstream open-data corpus lists this dataset as Perth & Kinross "
+            "(UK); region drives timezone and holiday calendar, so the "
+            "distinction changes every temporal feature."
+        ),
     },
     "acn": {
-        "label": "ACN sites (California)",
+        "label": "ACN sites (Pasadena, California)",
         "region": "California",
-        "timezone": None,
-        "place_query": None,
-        "country_code": None,
+        "timezone": "America/Los_Angeles",
+        "place_query": "Pasadena, California, United States",
+        "country_code": "us",
+        "profile_file": "acn_sessions.csv",
+        "profile_entity_id": "caltech",
         "location_note": (
-            "ACN contains multiple named campuses and an unresolved office entity; "
-            "the session files do not provide verified coordinates."
+            "ACN-Data names its sites as Caltech and JPL, both in the Pasadena "
+            "area, so the place is documented rather than inferred. The third "
+            "entity (office001) is undisclosed and is not separately located."
         ),
     },
     "sap": {

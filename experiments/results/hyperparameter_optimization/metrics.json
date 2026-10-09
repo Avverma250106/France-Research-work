@@ -1,0 +1,73 @@
+{
+  "experiment": "hyperparameter_optimization",
+  "configuration": {
+    "search": "2 candidates per stage; two expanding-window folds",
+    "stage_1_selection_metric": "mean fold log loss",
+    "stage_2_selection_metric": "mean positive-hour fold MAE"
+  },
+  "training_date_range": {
+    "start": "2011-08-05 20:00:00+00:00",
+    "end": "2019-08-27 01:00:00+00:00"
+  },
+  "validation_date_range": {
+    "start": "2019-08-27 02:00:00+00:00",
+    "end": "2020-06-11 05:00:00+00:00"
+  },
+  "test_date_range_reserved_not_evaluated": {
+    "start": "2020-06-11 06:00:00+00:00",
+    "end": "2021-04-12 21:00:00+00:00"
+  },
+  "n_training_rows": 176503,
+  "n_validation_rows": 44133,
+  "n_test_rows_reserved": 38942,
+  "metrics": {
+    "mae": 3.7813093189721334,
+    "rmse": 9.025618708891692,
+    "r2": 0.9348294575997349,
+    "wape": 21.5001192449008,
+    "active_hour_mae": 5.9781281454485065,
+    "top_10pct_demand_mae": 16.58725331303652,
+    "top_1pct_demand_mae": 40.06886601195833,
+    "n_observations": 44133,
+    "active_hours": 27147,
+    "top_10pct_threshold_kwh": 67.57866538310981,
+    "top_1pct_threshold_kwh": 159.25203356683122,
+    "precision": 0.9585822673459663,
+    "recall": 0.9633845360444985,
+    "f1": 0.9609774021679222,
+    "threshold": 0.5,
+    "balanced_selection_score": 1.0761493029110216
+  },
+  "model_parameters": {
+    "stage_1_classifier": {
+      "n_estimators": 250,
+      "learning_rate": 0.07,
+      "max_depth": 4,
+      "min_child_weight": 5,
+      "subsample": 0.85,
+      "colsample_bytree": 1.0,
+      "reg_alpha": 0.0,
+      "reg_lambda": 5.0,
+      "random_state": 42,
+      "n_jobs": 4,
+      "tree_method": "hist"
+    },
+    "stage_2_tweedie_regressor": {
+      "n_estimators": 250,
+      "learning_rate": 0.03,
+      "max_depth": 4,
+      "min_child_weight": 8,
+      "subsample": 1.0,
+      "colsample_bytree": 1.0,
+      "reg_alpha": 0.5,
+      "reg_lambda": 5.0,
+      "random_state": 42,
+      "n_jobs": 4,
+      "tree_method": "hist",
+      "objective": "reg:tweedie",
+      "tweedie_variance_power": 1.2
+    },
+    "threshold": 0.5
+  },
+  "random_seed": 42
+}

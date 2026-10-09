@@ -38,10 +38,6 @@ class ModelService:
     def data_source(self):
         return self.meta.get("data_source", "unknown")
 
-    @property
-    def target_mode(self):
-        return self.meta.get("target_mode", "nowcast")
-
     def predict(self, feature_rows: pd.DataFrame):
         """feature_rows: output of the shared pipeline, one row per entity."""
         df = P.attach_entity_stats(feature_rows, self.entity_stats, self.global_mean)

@@ -38,8 +38,15 @@ def nrmse(y_true, y_pred, scale=None):
 
 def persistence_forecast(df, target_col="kwh_allocated", entity_col="entity_id"):
     out = df.sort_values([entity_col, "hour"]).copy()
-    out["forecast"] = out.groupby(entity_col, sort=False)[target_col].shift(1)
-    out["forecast"] = out["forecast"].fillna(out.groupby(entity_col, sort=False)[target_col].transform("mean"))
+    if target_col == "target" and "kwh_allocated" in out.columns:
+        # Forecast rows are indexed by feature time t and target y(t+1).
+        # Persistence for that target is the observed y(t) in the same row.
+        out["forecast"] = out["kwh_allocated"]
+    else:
+        out["forecast"] = out.groupby(entity_col, sort=False)[target_col].shift(1)
+        out["forecast"] = out["forecast"].fillna(
+            out.groupby(entity_col, sort=False)[target_col].transform("mean")
+        )
     return out["forecast"].to_numpy()
 
 
@@ -103,7 +110,7 @@ def evaluate_baselines(df, target_col="kwh_allocated", entity_col="entity_id", f
 
     Returns a dictionary with per-entity metrics and a summary across entities.
     """
-    work = df.sort_values([entity_col, "hour"]).copy()
+    work = df.sort_values([entity_col, "hour"]).reset_index(drop=True).copy()
     result = {"by_entity": {}, "summary": {}}
 
     if "lag_1h" not in work.columns:

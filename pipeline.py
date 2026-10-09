@@ -15,13 +15,19 @@ import pandas as pd
 import holidays
 
 TARGET = "kwh_allocated"
-TARGET_MODE = "nowcast"
 
-# The model learns per entity, so keep entity_id as a categorical input rather
-# than collapsing all sites into one representation.
-DROP_COLUMNS = ["hour", "kwh_allocated", "target", "site"]
+# From hurdle_model_cv.ipynb. entity_id is dropped here, so the three ACN sites
+# share one representation.
+DROP_COLUMNS = ["hour", "kwh_allocated", "target", "entity_id", "site"]
 
-CATEGORICAL_COLS = ["source_dataset", "region", "entity_id"]
+CATEGORICAL_COLS = ["source_dataset", "region"]
+
+# Professor feedback: sessions_started must be strictly historical.
+# 24 means the model sees the number of sessions that started at the same
+# entity exactly 24 hours before the prediction hour. Set to 168 to use
+# the same hour from the previous week for an alternative experiment.
+SESSION_COUNT_LAG_HOURS = 24
+SESSION_COUNT_FEATURE = f"sessions_started_lag{SESSION_COUNT_LAG_HOURS}h"
 
 TZ_MAP = {
     "California": "America/Los_Angeles",
@@ -75,11 +81,16 @@ def add_temporal_features(df):
 
 
 def add_session_count_features(hourly_df, sessions):
-    """sessions_started counts sessions connecting in the SAME hour as the target.
+    """Add leakage-safe historical session-arrival features.
 
-    The simulation legitimately knows this quantity because it generates the
-    sessions, so the model acts as a within-hour estimator. The UI labels it a
-    nowcast rather than a forecast for that reason.
+    The raw session count for hour t is *not* exposed to the model because it
+    is only known during/after hour t. Instead, ``SESSION_COUNT_FEATURE`` is the
+    count from ``SESSION_COUNT_LAG_HOURS`` earlier. The default 24-hour lag
+    follows the supervisor's suggested fix; 168 can be used for a previous-week
+    experiment.
+
+    ``sessions_started_roll24h`` remains a historical rolling mean and is built
+    from counts shifted by one hour, so the current hour is never included.
     """
     s = sessions.copy()
     s["connect_time_utc"] = pd.to_datetime(s["connect_time_utc"], utc=True)
@@ -88,19 +99,39 @@ def add_session_count_features(hourly_df, sessions):
     counts = (
         s.groupby(["source_dataset", "entity_id", "hour"])
         .size()
-        .reset_index(name="sessions_started")
+        .reset_index(name="_sessions_started_current")
     )
 
-    df = hourly_df.merge(counts, on=["source_dataset", "entity_id", "hour"], how="left")
-    df["sessions_started"] = df["sessions_started"].fillna(0).astype(int)
+    df = hourly_df.merge(
+        counts,
+        on=["source_dataset", "entity_id", "hour"],
+        how="left",
+    )
+    df["_sessions_started_current"] = (
+        df["_sessions_started_current"].fillna(0).astype(int)
+    )
+    df = df.sort_values(["source_dataset", "entity_id", "hour"]).copy()
 
-    shifted = df.groupby(["source_dataset", "entity_id"])["sessions_started"].shift(1)
+    groups = [df["source_dataset"], df["entity_id"]]
+    current = df["_sessions_started_current"]
+
+    # This is the feature that enters XGBoost. It is strictly historical.
+    df[SESSION_COUNT_FEATURE] = (
+        current.groupby(groups).shift(SESSION_COUNT_LAG_HOURS)
+    )
+
+    # Historical 24-hour arrival intensity. shift(1) excludes the current
+    # hour before the rolling window is calculated.
+    previous_hour = current.groupby(groups).shift(1)
     df["sessions_started_roll24h"] = (
-        shifted.groupby([df["source_dataset"], df["entity_id"]])
+        previous_hour.groupby(groups)
         .rolling(24, min_periods=6)
         .mean()
         .reset_index(level=[0, 1], drop=True)
     )
+
+    # Never let the contemporaneous count reach design_matrix().
+    df = df.drop(columns=["_sessions_started_current"])
     return df
 
 
@@ -154,22 +185,42 @@ def add_lag_and_rolling_features(df):
     return df
 
 
-def build_feature_table(hourly_reindexed, sessions, target_mode=TARGET_MODE):
+def build_feature_table(hourly_reindexed, sessions):
     df = add_temporal_features(hourly_reindexed)
     df = add_session_count_features(df, sessions)
     df = add_lag_and_rolling_features(df)
-    if target_mode not in {"nowcast", "forecast"}:
-        raise ValueError(f"Unsupported target_mode={target_mode!r}; expected 'nowcast' or 'forecast'.")
-    if target_mode == "forecast":
-        df = df.sort_values(["source_dataset", "entity_id", "hour"]).copy()
-        df["target"] = (
-            df.groupby(["source_dataset", "entity_id"], sort=False)[TARGET]
-            .shift(-1)
-            .reset_index(drop=True)
-        )
-    else:
-        df["target"] = df[TARGET]
     return df
+
+
+def validate_forecast_feature_leakage(df):
+    """Reject feature names that directly expose target-hour or future data."""
+    forbidden = []
+    for column in df.columns:
+        name = str(column).lower()
+        if (
+            name == "sessions_started"
+            or (
+                "sessions_started" in name
+                and not (
+                    name.startswith("sessions_started_lag")
+                    or name.startswith("sessions_started_roll")
+                )
+            )
+            or "session_count_current" in name
+            or name.startswith(
+                ("current_", "actual_", "target_hour_", "future_", "lead_", "next_")
+            )
+            or "_current" in name
+            or "target_hour" in name
+            or "_future" in name
+            or "future_" in name
+        ):
+            forbidden.append(str(column))
+    if forbidden:
+        raise ValueError(
+            "Forecast features contain current-hour or future information: "
+            + ", ".join(sorted(forbidden))
+        )
 
 
 def entity_stats_from(train_df):
@@ -177,9 +228,8 @@ def entity_stats_from(train_df):
 
     Persisted alongside the model so that serving reproduces training exactly.
     """
-    target_col = "target" if "target" in train_df.columns else TARGET
     stats = (
-        train_df.groupby("entity_id")[target_col]
+        train_df.groupby("entity_id")[TARGET]
         .agg(entity_mean_kwh="mean", entity_std_kwh="std", entity_max_kwh="max")
         .reset_index()
     )
@@ -203,6 +253,7 @@ def design_matrix(df, columns=None):
     model then returns plausible nonsense.
     """
     X = df.drop(columns=[c for c in DROP_COLUMNS if c in df.columns])
+    validate_forecast_feature_leakage(X)
     cats = [c for c in CATEGORICAL_COLS if c in X.columns]
     X = pd.get_dummies(X, columns=cats, drop_first=True)
     if columns is not None:
@@ -210,17 +261,12 @@ def design_matrix(df, columns=None):
     return X.astype(float)
 
 
-def hurdle_predict(clf, reg, X, charge_threshold=0.5, return_thresholded=False):
-    """Return the mean-oriented expected load for the hurdle model.
+def hurdle_predict(clf, reg, X, charge_threshold=0.5):
+    """The notebook's prediction rule: hard threshold x magnitude.
 
-    The model predicts P(charge) and the expected positive load magnitude.
-    For mean-oriented metrics (RMSE, R^2), the correct estimator is
-    probability * magnitude, not a hard threshold times magnitude.
+    Returns (prediction, charge probability).
     """
     charge_prob = clf.predict_proba(X)[:, 1]
+    will_charge = (charge_prob >= charge_threshold).astype(int)
     magnitude = np.clip(reg.predict(X), 0, None)
-    expected_load = charge_prob * magnitude
-    thresholded = (charge_prob >= charge_threshold).astype(int) * magnitude
-    if return_thresholded:
-        return thresholded, charge_prob
-    return expected_load, charge_prob
+    return will_charge * magnitude, charge_prob

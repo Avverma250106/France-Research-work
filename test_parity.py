@@ -26,6 +26,48 @@ def main():
 
     offline = P.build_feature_table(hourly, sessions)
     offline = offline.sort_values(["entity_id", "hour"])
+
+    # Verify the supervisor's leakage fix directly: the model feature at hour t
+    # must equal the session count from t-SESSION_COUNT_LAG_HOURS, never the
+    # contemporaneous count at t.
+    raw = sessions.copy()
+    raw["connect_time_utc"] = pd.to_datetime(raw["connect_time_utc"], utc=True)
+    raw["hour"] = raw["connect_time_utc"].dt.floor("h")
+    counts = (
+        raw.groupby(["source_dataset", "entity_id", "hour"])
+        .size()
+        .rename("expected")
+        .reset_index()
+    )
+    expected = hourly[["source_dataset", "entity_id", "hour"]].merge(
+        counts, on=["source_dataset", "entity_id", "hour"], how="left"
+    )
+    expected["expected"] = expected["expected"].fillna(0)
+    expected["expected"] = (
+        expected.groupby(["source_dataset", "entity_id"])["expected"]
+        .shift(P.SESSION_COUNT_LAG_HOURS)
+    )
+    check = offline[["source_dataset", "entity_id", "hour", P.SESSION_COUNT_FEATURE]].merge(
+        expected, on=["source_dataset", "entity_id", "hour"], how="left"
+    )
+    valid = check[P.SESSION_COUNT_FEATURE].notna() & check["expected"].notna()
+    if not valid.any():
+        raise AssertionError("No rows available to verify historical session-count lag")
+    max_diff = (
+        check.loc[valid, P.SESSION_COUNT_FEATURE].astype(float)
+        - check.loc[valid, "expected"].astype(float)
+    ).abs().max()
+    assert max_diff <= TOL, (
+        f"{P.SESSION_COUNT_FEATURE} is not shifted by "
+        f"{P.SESSION_COUNT_LAG_HOURS}h; max diff={max_diff}"
+    )
+    print(
+        f"PASS  {P.SESSION_COUNT_FEATURE} is strictly historical "
+        f"({P.SESSION_COUNT_LAG_HOURS}h lag)"
+    )
+    assert "sessions_started" not in offline.columns, (
+        "Raw contemporaneous sessions_started must not be present"
+    )
     last = offline.groupby("entity_id", as_index=False).tail(1).set_index("entity_id")
 
     prior = {str(e): [float(g["kwh_allocated"].sum()), int(len(g))]

@@ -18,8 +18,12 @@ import pandas as pd
 
 from . import stations as st
 from . import synth
+from .demand_profiles import HistoricalDemandProfile
 from .features_rt import FeatureBuffer
+from .mappo_runtime import MAPPOController
 from .roads import RoadNetwork
+from .station_provider import DATASET_CONFIG
+from marl.config import MAX_STATIONS
 
 SIM_HOUR_WALL_SECONDS = 8.0        # 1 simulated hour per 8 wall seconds
 METRIC_WINDOW = 72                  # rolling window, in simulated hours
@@ -91,36 +95,137 @@ def _street_path(rng, origin, dest):
 
 
 class Engine:
-    def __init__(self, model, warmup_hourly=None, warmup_sessions=None, seed=5):
+    def __init__(
+        self,
+        model,
+        warmup_hourly=None,
+        warmup_sessions=None,
+        seed=5,
+        *,
+        station_mode="synthetic",
+        dataset="paris",
+        station_cache=None,
+        refresh_stations=False,
+        max_stations=MAX_STATIONS,
+    ):
         self.rng = np.random.default_rng(seed)
         self.model = model
-        self.sites, self.stations = st.build()
+        self.station_mode = station_mode
+        self.dataset = str(dataset).strip().lower()
+        self.demand_profile = None
+        expanding_state = None
+        if station_mode == "osm":
+            if max_stations != MAX_STATIONS:
+                raise ValueError(
+                    f"The existing MAPPO checkpoint requires exactly "
+                    f"{MAX_STATIONS} stations."
+                )
+            self.sites, self.stations, self.geography = st.build_osm(
+                self.dataset,
+                cache_path=station_cache,
+                refresh=refresh_stations,
+                max_stations=max_stations,
+            )
+            dataset_config = DATASET_CONFIG[self.dataset]
+            self.timezone = dataset_config["timezone"]
+            source_dataset = self.dataset
+            region = dataset_config["region"]
+            self.demand_profile = HistoricalDemandProfile.load(self.dataset)
+            warmup_hourly, warmup_sessions, expanding_state = (
+                self.demand_profile.warmup()
+            )
+            self.geography.update({
+                "station_source": "openstreetmap",
+                "demand_source": "historical_profile",
+                "demand_profile_entity": self.demand_profile.entity_id,
+                "controller": "MAPPO",
+                "station_mode": "osm",
+            })
+            coordinates = [(s["lon"], s["lat"]) for s in self.stations]
+            self.centre = (
+                sum(point[0] for point in coordinates) / len(coordinates),
+                sum(point[1] for point in coordinates) / len(coordinates),
+            )
+        elif station_mode == "synthetic":
+            if self.dataset != "paris":
+                raise ValueError(
+                    "Synthetic geography is available only for the Paris demo."
+                )
+            self.sites, all_stations = st.build()
+            self.stations = [
+                next(
+                    station for station in all_stations
+                    if station["entity_id"] == site["entity_id"]
+                )
+                for site in self.sites
+            ]
+            if len(self.stations) != MAX_STATIONS:
+                raise ValueError(
+                    "The existing MAPPO checkpoint requires exactly "
+                    f"{MAX_STATIONS} synthetic demo stations."
+                )
+            self.timezone = "Europe/Paris"
+            source_dataset = "paris"
+            region = "France"
+            self.centre = st.CENTRE
+            self.geography = {
+                "dataset": "paris",
+                "dataset_label": "Paris, France",
+                "provider": "synthetic",
+                "attribution": None,
+                "cache_used": False,
+                "location_note": "Station coordinates and demand are synthetic.",
+                "station_source": "synthetic",
+                "demand_source": "synthetic_profile",
+                "controller": "MAPPO",
+                "station_mode": "synthetic",
+            }
+        else:
+            raise ValueError("station_mode must be 'synthetic' or 'osm'.")
         self.entities = [s["entity_id"] for s in self.sites]
         self.by_entity = {}
         self.station_xy = {}
         for s in self.stations:
             self.by_entity.setdefault(s["entity_id"], []).append(s)
             self.station_xy[s["id"]] = (s["lon"], s["lat"])
+        self.mappo = MAPPOController(self.stations)
+        if tuple(self.mappo.station_ids) != tuple(s["id"] for s in self.stations):
+            raise ValueError("MAPPO agent IDs must exactly match map station IDs.")
 
-        self.buffer = FeatureBuffer(self.entities)
+        self.buffer = FeatureBuffer(
+            self.entities, source_dataset=source_dataset, region=region
+        )
+        if expanding_state is None:
+            expanding_state = model.meta.get("expanding_state")
         if warmup_hourly is not None and len(warmup_hourly):
             self.buffer.warm(warmup_hourly, warmup_sessions,
-                             prior=model.meta.get("expanding_state"))
+                             prior=expanding_state)
 
         last = self.buffer.last_hour()
         self.now = (last + pd.Timedelta(hours=1)) if last is not None \
             else pd.Timestamp("2025-01-06 00:00", tz="UTC")
         self.hour_start = self.now.floor("h")
+        self.initial_mappo_frame = None
+        if station_mode == "osm" and last is not None:
+            initial_current = self._distribute_profile_demand({
+                entity: self.buffer.hourly[entity][-1][1]
+                for entity in self.entities
+            })
+            initial_forecast = self._forecast_next_station_demand()
+            self.initial_mappo_frame = self.mappo.advance(
+                initial_current, initial_forecast
+            )
+            self.initial_mappo_frame["forecast_hour"] = self.now.isoformat()
 
         # Real street routing when the cached road graph is available; the
         # approximated path is kept as a fallback so the simulation still runs
         # without it (build it with: python3 -m sim.roads).
-        self.road = RoadNetwork.load()
+        self.road = RoadNetwork.load() if self.dataset == "paris" else None
         self.routed = self.road is not None
         # A fixed pool of origins keeps the router's cache hot: the same
         # (origin, station) pairs recur instead of every trip being unique.
         self.origins = [
-            [st.CENTRE[0] + r * math.cos(a), st.CENTRE[1] + r * math.sin(a) * 0.7]
+            [self.centre[0] + r * math.cos(a), self.centre[1] + r * math.sin(a) * 0.7]
             for a, r in ((i * 2 * math.pi / 24, 0.030 + 0.055 * ((i % 3) / 2.0))
                          for i in range(24))
         ]
@@ -145,16 +250,59 @@ class Engine:
     # ---------- arrivals ----------
 
     def _schedule_hour(self, hour):
-        local = hour.tz_convert("Europe/Paris")
+        local = hour.tz_convert(self.timezone)
         for site in self.sites:
             e = site["entity_id"]
-            lam = synth.arrival_rate(e, local.hour, local.weekday() >= 5,
-                                     dayofyear=local.dayofyear)
+            if self.demand_profile is not None:
+                lam = self.demand_profile.arrival_rate(
+                    local.hour, local.weekday() >= 5
+                )
+            else:
+                lam = synth.arrival_rate(
+                    e, local.hour, local.weekday() >= 5,
+                    dayofyear=local.dayofyear,
+                )
             n = self.rng.poisson(lam)
             for _ in range(n):
                 arrive = hour + pd.Timedelta(minutes=float(self.rng.uniform(0, 60)))
                 travel = float(self.rng.uniform(20, 50))
                 self.pending.append((arrive - pd.Timedelta(minutes=travel), arrive, e))
+
+    def _distribute_profile_demand(self, profile_demand):
+        capacities = self.mappo.capacities
+        station_demand = {}
+        for entity in self.entities:
+            group = [
+                station for station in self.stations
+                if station["entity_id"] == entity
+            ]
+            total = max(0.0, float(profile_demand.get(entity, 0.0)))
+            capacity_total = sum(capacities[station["id"]] for station in group)
+            for station in group:
+                station_demand[station["id"]] = (
+                    total * capacities[station["id"]] / capacity_total
+                    if capacity_total > 0
+                    else total / len(group)
+                )
+        if set(station_demand) != set(self.mappo.station_ids):
+            raise ValueError("Demand station IDs do not match the MAPPO agents.")
+        return station_demand
+
+    def _forecast_next_station_demand(self):
+        next_rows = self.buffer.feature_rows_for_next_hour()
+        if next_rows is None or len(next_rows) != len(self.entities):
+            raise ValueError(
+                "The leakage-safe feature buffer did not produce one next-hour "
+                "forecast row per dataset profile."
+            )
+        prediction, _ = self.model.predict(next_rows)
+        if len(prediction) != len(next_rows):
+            raise ValueError("The model returned a mismatched next-hour forecast.")
+        by_entity = {
+            str(entity): float(value)
+            for entity, value in zip(next_rows["entity_id"], prediction)
+        }
+        return self._distribute_profile_demand(by_entity)
 
     def _outer_point(self):
         return list(self.origins[self.rng.integers(len(self.origins))])
@@ -186,7 +334,13 @@ class Engine:
         origin = self._outer_point()
         dest = [station["lon"], station["lat"]]
 
-        dur_h, energy = synth.sample_session(self.rng, entity)
+        if self.demand_profile is not None:
+            local = arrive.tz_convert(self.timezone)
+            dur_h, energy = self.demand_profile.sample_session(
+                self.rng, local.hour, local.weekday() >= 5
+            )
+        else:
+            dur_h, energy = synth.sample_session(self.rng, entity)
         session = Session(entity, station["id"], arrive,
                           arrive + pd.Timedelta(hours=dur_h), energy)
 
@@ -228,12 +382,15 @@ class Engine:
         h0, h1 = self.hour_start, self.hour_start + pd.Timedelta(hours=1)
 
         actual, started = {}, {}
+        actual_by_station = {station["id"]: 0.0 for station in self.stations}
         for e in self.entities:
             actual[e] = 0.0
             started[e] = []
         for s in self.active:
             if s.end > h0 and s.connect < h1:
-                actual[s.entity_id] += s.allocated(h0, h1)
+                energy = s.allocated(h0, h1)
+                actual[s.entity_id] += energy
+                actual_by_station[s.station_id] += energy
         for s in self.hour_sessions:
             started[s.entity_id].append(s.connect)
 
@@ -247,6 +404,10 @@ class Engine:
             for i, e in enumerate(rows["entity_id"]):
                 preds[e] = float(p[i])
                 probs[e] = float(pr[i])
+
+        forecast_by_station = self._forecast_next_station_demand()
+        mappo_frame = self.mappo.advance(actual_by_station, forecast_by_station)
+        mappo_frame["forecast_hour"] = h1.isoformat()
 
         site_frames = []
         for site in self.sites:
@@ -295,6 +456,10 @@ class Engine:
             "overall": {**_metrics(self.history),
                         "hours": len(self.history) // len(self.entities)},
             "n_active_sessions": len(self.active),
+            "station_source": self.geography["station_source"],
+            "demand_source": self.geography["demand_source"],
+            "controller": "MAPPO",
+            "mappo": mappo_frame,
         }
         return self.last_frame
 

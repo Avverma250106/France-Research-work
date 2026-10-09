@@ -1,0 +1,100 @@
+{
+  "stage_1_classifier_search": [
+    {
+      "parameters": {
+        "n_estimators": 500,
+        "learning_rate": 0.05,
+        "max_depth": 6,
+        "min_child_weight": 5,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "reg_alpha": 0.1,
+        "reg_lambda": 1.0,
+        "random_state": 42,
+        "n_jobs": 4,
+        "tree_method": "hist"
+      },
+      "fold_scores": [
+        0.1982298493385315,
+        0.14260077476501465
+      ],
+      "mean_score": 0.17041531205177307
+    },
+    {
+      "parameters": {
+        "n_estimators": 250,
+        "learning_rate": 0.07,
+        "max_depth": 4,
+        "min_child_weight": 5,
+        "subsample": 0.85,
+        "colsample_bytree": 1.0,
+        "reg_alpha": 0.0,
+        "reg_lambda": 5.0,
+        "random_state": 42,
+        "n_jobs": 4,
+        "tree_method": "hist"
+      },
+      "fold_scores": [
+        0.14205050468444824,
+        0.12052161246538162
+      ],
+      "mean_score": 0.13128605857491493
+    }
+  ],
+  "stage_2_tweedie_regressor_search": [
+    {
+      "parameters": {
+        "n_estimators": 500,
+        "learning_rate": 0.05,
+        "max_depth": 6,
+        "min_child_weight": 5,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+        "reg_alpha": 0.1,
+        "reg_lambda": 1.0,
+        "random_state": 42,
+        "n_jobs": 4,
+        "tree_method": "hist"
+      },
+      "fold_scores": [
+        17.057732127559394,
+        10.480037284221599
+      ],
+      "mean_score": 13.768884705890496
+    },
+    {
+      "parameters": {
+        "n_estimators": 250,
+        "learning_rate": 0.03,
+        "max_depth": 4,
+        "min_child_weight": 8,
+        "subsample": 1.0,
+        "colsample_bytree": 1.0,
+        "reg_alpha": 0.5,
+        "reg_lambda": 5.0,
+        "random_state": 42,
+        "n_jobs": 4,
+        "tree_method": "hist"
+      },
+      "fold_scores": [
+        15.92922275822855,
+        9.912081239564621
+      ],
+      "mean_score": 12.920651998896584
+    }
+  ],
+  "selected_validation_experiment": "tweedie_power_1.2",
+  "training_date_range": {
+    "start": "2011-08-05 20:00:00+00:00",
+    "end": "2019-08-27 01:00:00+00:00"
+  },
+  "validation_date_range": {
+    "start": "2019-08-27 02:00:00+00:00",
+    "end": "2020-06-11 05:00:00+00:00"
+  },
+  "test_date_range_reserved_not_evaluated": {
+    "start": "2020-06-11 06:00:00+00:00",
+    "end": "2021-04-12 21:00:00+00:00"
+  },
+  "random_seed": 42
+}

@@ -18,10 +18,11 @@ Dataset: https://www.kaggle.com/datasets/akshverma1w32/ev-research-dataset
 
 ## Simulation
 
-A map of Île-de-France with vehicles driving to charging sites, where the
-model's error metrics update as the simulated fleet moves. The simulation
-generates the ground truth, so predicted-vs-actual is genuine rather than
-replayed.
+A map of six charging points in the selected dataset location, with simulated
+vehicles, leakage-safe Hurdle forecasts, and dispatch from the existing
+six-agent MAPPO checkpoint. For REAL locations, arrival and session-size
+profiles are resampled from that dataset's historical aggregate sessions; they
+are not observed demand at the individual OSM stations.
 
 ```bash
 pip install -r requirements.txt
@@ -39,9 +40,10 @@ it after cloning rather than expecting it in the repo.
 ### Data source
 
 `train_for_sim.py` uses `harmonized_sessions/` if present and otherwise
-generates a synthetic corpus, so the simulation runs without the real data. The
-UI states which is in use. A synthetic run demonstrates that the pipeline works
-end to end; its error figures are not results.
+generates a synthetic corpus. Real-geography mode requires the saved model,
+historical session file for the selected dataset, a valid station catalog, and
+the saved MAPPO checkpoint. Synthetic mode is an explicit Paris-only offline
+demo. It does not silently replace missing real station data.
 
 ### Street routing
 
@@ -54,25 +56,73 @@ an external routing service at demo time.
 Without the cache the simulation falls back to approximated paths and still
 runs; `/health` and the `hello` frame both report `routed`.
 
-### Station coordinates are synthetic
+### Real station geography and modelled demand
 
-Swap in the [national IRVE register](https://www.data.gouv.fr/datasets/base-nationale-des-irve-infrastructures-de-recharge-pour-vehicules-electriques)
-(schema `etalab/schema-irve-statique`) for real geometry — it carries lat/lon,
-rated power and operator for every charge point in France. Basemap tiles come
-from the IGN Géoplateforme and need no API key.
+The simulation defaults to real charging-station geography from OpenStreetMap
+Overpass. On first use, records are cached under
+`artifacts/station_cache/<dataset>.json`; subsequent runs work offline from that
+cache. The dataset's named city is resolved through OpenStreetMap Nominatim
+(country-checked) and its current bounds are used for the Overpass query; the
+repository does not embed guessed city coordinates. Refresh explicitly with
+`SIM_STATION_REFRESH=1`. OSM station coordinates
+and power/connectors are shown only when those values are tagged in OSM.
+Unknown ratings are not presented as observed capacity.
 
-### Nowcast, not forecast
+The dataset selector supports Paris, Boulder, Palo Alto, Dundee, and Perth
+(Western Australia). ACN and SAP remain unavailable in REAL mode until verified
+site coordinates are available: the session metadata identifies multiple ACN
+campuses and only a country for SAP, which is not enough to place their stations
+safely. Selecting an unsupported location returns the reason rather than
+guessing.
 
-The model uses `sessions_started(t)` to predict `kwh_allocated(t)`, so it
-estimates the current hour rather than forecasting the next one. That is
-well-defined inside a simulation, which knows how many sessions it started, and
-the UI labels it accordingly.
+The number of controlled stations is fixed at six because the existing MAPPO
+checkpoint has six per-agent actors and a six-agent centralized critic.
+`MAX_STATIONS` must remain `6` unless the checkpoint is replaced. The station
+IDs are read from the selected catalog and are also the MAPPO agent IDs. The
+saved model forecast is at the dataset's aggregate entity level and is
+distributed across the six stations by their rated/estimated one-hour capacity.
+Historical demand is not mapped to physical OSM stations; the simulator
+resamples the selected dataset's observed arrival times, durations, and energy
+sizes, and assigns those sessions to the six stations. Unknown OSM power tags
+remain unknown; MAPPO uses an explicitly estimated 7.4 kW per point only to
+construct a simulation capacity.
+
+The OSM contribution is © OpenStreetMap contributors and is available under
+the [Open Database License](https://www.openstreetmap.org/copyright).
+
+REAL OSM mode is the default. Choose SYNTHETIC in the UI for the original
+Paris-only offline demo. `SIM_DATASET` selects the startup dataset (default
+`paris`), and the UI can switch datasets without restarting. The provider uses
+cache-first loading and deterministic farthest-point sampling; the cache is
+written only after a valid catalog with at least six stations is obtained.
+`MAX_STATIONS` is pinned to `6` to match the saved MAPPO policy. To use a custom
+cache directory, set `SIM_STATION_CACHE` to a directory; a `.json` path is
+treated as a single cache file for the startup dataset.
+
+When no valid cache exists and Overpass cannot be reached, startup/switching
+fails with an explicit error. HTTP 429 responses are retried with backoff;
+failed/partial catalogs are not cached. There is no silent fallback to
+synthetic coordinates.
+
+### Leakage-safe forecasting
+
+The model does **not** use the contemporaneous `sessions_started(t)` count. That
+value is only known during the target hour and would leak future information into
+a forecast. Instead, the feature pipeline uses `sessions_started_lag24h` by
+default: the number of sessions that started at the same entity 24 hours earlier.
+The historical rolling arrival feature is also computed only from completed
+hours.
+
+To run the previous-week variant suggested by the supervisor, change
+`SESSION_COUNT_LAG_HOURS` in `pipeline.py` from `24` to `168` and retrain.
 
 ### Prediction granularity
 
-Predictions are made per **site**, not per individual charge point, because that
-is the granularity the model is trained at. Stations are rendered individually
-and drive arrivals; predictions and error metrics are reported per site.
+Predictions and error metrics remain at the dataset/profile level because the
+historical corpus does not identify demand at the selected OSM charge points.
+MAPPO controls each of the six displayed stations, but station-level demand
+profiles are capacity-weighted assignments from the dataset aggregate. OSM
+location data must not be interpreted as observed station-level load.
 
 ## Verification
 

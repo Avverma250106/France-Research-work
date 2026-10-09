@@ -38,3 +38,12 @@ def test_design_matrix_keeps_entity_id_dummies():
     X = P.design_matrix(df)
     entity_cols = [c for c in X.columns if c.startswith("entity_id_")]
     assert entity_cols
+
+
+def test_validate_forecast_feature_leakage_fails_on_future_fields():
+    df = pd.DataFrame({"future_total_energy": [1.0, 2.0], "target": [3.0, 4.0]})
+    try:
+        P.validate_forecast_feature_leakage(df)
+        raise AssertionError("Expected ValueError for future leakage fields")
+    except ValueError:
+        pass

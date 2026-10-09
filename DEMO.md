@@ -3,19 +3,14 @@
 ## Run it
 
 ```bash
-python3 train_for_sim.py
-python3 -m sim.roads          # one-off: street routing for vehicles
 python3 -m uvicorn sim.server:app --port 8008
 ```
 
 Open **http://localhost:8008**.
 
-Training takes ~20s and only needs re-running if you change the corpus. After
-that, just:
-
-```bash
-python3 -m uvicorn sim.server:app --port 8008
-```
+The server uses the saved Hurdle-XGBoost artifacts and six-agent MAPPO
+checkpoint; it does not train either model at startup. For offline Paris
+synthetic mode, choose **SYNTHETIC** in the UI.
 
 **Start it ~10 minutes before you present.** The rolling metrics need 72
 simulated hours to fill their window, and at 8s per simulated hour that is about
@@ -39,8 +34,8 @@ To stop: `Ctrl-C`, or `kill $(lsof -ti:8008)`.
 
 | Element | Meaning |
 |---|---|
-| Blue-ringed dots | The 6 **sites**. This is where the model predicts. |
-| Small grey dots | The 71 individual **charge points**. |
+| Blue-ringed dot | The selected dataset's aggregate historical demand profile. |
+| Small grey dots | The 6 stations selected from that location's OSM catalog. |
 | Orange dots | Vehicles **driving to charge**. |
 | Green dots | Vehicles **plugged in**. |
 | Blue dots | Vehicles **finished, driving away**. |
@@ -59,36 +54,34 @@ Clock runs at **1 simulated hour per 8 seconds**, so a full day passes in about
 
 Point at the two badges in the header before anything else.
 
-> "Two labels up front. Amber says the model was trained on synthetic sessions —
-> the real corpus isn't on this machine, so these error numbers show the
-> pipeline works, they're not results. Blue says nowcast, not forecast: the
-> model uses sessions started in hour *t* to predict hour *t*. That's legitimate
-> here because the simulator generates those sessions and genuinely knows them.
-> It is not legitimate as a published forecasting result."
+> "The mode selector distinguishes real OpenStreetMap geography from the
+> synthetic Paris fallback. The leakage-safe forecast badge means the model
+> does not use sessions that start in the target hour. Instead it uses
+> historical session arrivals from 24 hours earlier, plus historical demand
+> lags and rolling statistics. So the inputs are available before the target
+> hour begins."
 
 Leading with this is the strongest move available. It means nobody in the room
 gets to "catch" you with it later, and everything after it is trusted.
 
 ### 2. The map — what is actually being simulated (45 seconds)
 
-> "Real IGN basemap — the French national mapping agency, no API key. Six sites
-> across Île-de-France with 71 charge points. Cars drive in, plug in, charge,
-> and drive away. Orange is arriving, green is charging, blue is leaving."
+> "The map follows the selected dataset: Paris, Boulder, Palo Alto, Dundee, or
+> Perth. These are real OSM station locations; the six displayed stations are
+> also the six MAPPO agents. Cars drive in, plug in, charge, and drive away."
 
 Pan and zoom. It is a real map, and moving it makes that obvious. **Zoom in to
 street level on a moving vehicle** - this is the detail worth showing. The cars
 follow the actual road network, not straight lines between points:
 
-> "Routing is shortest-path over the real OpenStreetMap road graph for Paris -
-> about 4,500 junctions - computed locally. No external routing service, so
-> nothing to rate-limit or go down mid-demo."
+> "Paris uses the cached OpenStreetMap road graph when available. Other
+> locations use the simulator's approximate vehicle paths."
 
 Then the key point about granularity:
 
-> "Prediction happens at the **site** level, not per charge point — because that's
-> the granularity the model was trained at. Every non-ACN entity in the corpus is
-> a whole site. Showing per-station predictions would be inventing precision the
-> model doesn't have."
+> "The model forecast is at the dataset's aggregate profile level. We distribute
+> it across the six OSM stations by capacity for control, but the historical
+> corpus does not identify the actual demand of each physical charger."
 
 ### 3. The race against persistence — this is the actual argument (60 seconds)
 
@@ -106,42 +99,41 @@ Then explain why, because this is the most technically interesting thing you hav
 > mechanical plateaus. Persistence is therefore a brutal baseline, and the
 > model's real job is predicting the **transitions** — the starts and the stops."
 
-Typical live figure: model ~35–40% better than persistence on MAE.
+The displayed comparison is a simulation diagnostic only; it is not a new
+offline evaluation or an untouched-test result.
 
 ### 4. The chart — where it works and where it fails (45 seconds)
 
 Point at the predicted-vs-actual chart.
 
-> "Grey area is actual load, blue is the model, orange is persistence. Watch
-> orange: it's the blue line shifted one hour right. On the flat stretches it's
-> almost perfect. On the climbs it's a full hour behind — and that's exactly the
-> gap the model is earning."
+> "Grey area is simulated actual load, blue is the model, orange is persistence.
+> These live curves help inspect the simulator, not measure held-out research
+> performance."
 
 Then find a bad hour in the per-site table and say so out loud:
 
-> "Bercy here — 24.4 actual, 7.7 predicted, error 16.7. That's a cluster of cars
-> plugging in at once. The error concentrates at transitions, which is what the
-> allocation structure predicts."
+> "This is simulated/profile-resampled demand, not a held-out test set or
+> station telemetry. The live error is a simulator diagnostic, not a research
+> evaluation."
 
 **Showing a failure deliberately is more convincing than hiding it.** It proves
 you understand the model rather than just having plotted it.
 
 ### 5. Close on what makes it real (20 seconds)
 
-> "Drop the real corpus into `harmonized_sessions/`, re-run training, and the
-> amber badge turns blue. No code changes. Station coordinates are synthetic —
-> the national IRVE register has real lat/lon, rated power and operator for every
-> charge point in France, and that's a drop-in swap too."
+> "Real station geography and historical demand are different data sources.
+> The map shows OSM charge points, while the demand profile comes from the
+> selected dataset's historical sessions. It is not observed station-specific
+> demand."
 
 ---
 
 ## Questions you will get
 
 **"Is this actually your model or a mock-up?"**
-Real. Live XGBoost — `binary:logistic` classifier × `reg:tweedie` regressor at
-power 1.3, 500 trees each, 50 pinned feature columns, scored through the same
-`pipeline.hurdle_predict` the training script uses. Only the training *data* is
-synthetic. You can show this:
+The existing saved XGBoost hurdle artifacts are served through
+`sim.model_service.ModelService`; the simulation does not retrain them. You can
+show the artifact metadata:
 ```bash
 python3 -c "from sim.model_service import ModelService; m=ModelService(); print(len(m.columns),'features |',m.meta['data_source'])"
 ```
@@ -150,15 +142,16 @@ python3 -c "from sim.model_service import ModelService; m=ModelService(); print(
 ```bash
 python3 test_parity.py
 ```
-Asserts all 38 features match the offline builder to 1e-9. It earns its keep:
+Asserts the live ring buffer reproduces the offline feature builder to 1e-9. It earns its keep:
 it caught `expanding_mean` drifting, because that feature expands over all
 history and the live ring buffer only holds 336 hours. It's now carried as
 explicit state.
 
-**"Why only 6 sites when France has 150,000 charge points?"**
-Because the model was trained on site aggregates. Per-station prediction needs
-per-station training history — that means polling the Belib' real-time feed and
-waiting ~10 weeks for enough history. Worth starting now; not fakeable today.
+**"Why only 6 stations?"**
+The saved MAPPO checkpoint has six per-agent actors and a centralized critic
+dimensioned for six agents. Reusing it without retraining requires six selected
+stations. This is a controller/checkpoint limit, not a claim that the model
+has station-specific historical demand.
 
 **"Why is WAPE sometimes over 100%?"**
 Overnight, actual load approaches zero and WAPE divides by it. Watch MAE and
@@ -180,21 +173,24 @@ needs is when cars arrive and how much they draw, which the agent layer produces
 directly. SUMO would earn its place for battery-physics or congestion-feedback
 claims.
 
-**"Is the simulation testing on data the model trained on?"**
-No. The warm-up buffer sits entirely inside the held-out window - zero rows from
-training - and every hour the model predicts is generated after the corpus ends.
-Be upfront about the caveat though: the simulated fleet is drawn from the same
-generative process as the training corpus, so it is an in-distribution test. No
-drift, no regime change. That is why the margin over persistence looks so stable.
+**"Is this an untouched test evaluation?"**
+No. The UI is a live simulation using historical dataset-level arrival/session
+profiles and the saved model. Its rolling errors are not a new untouched-test
+evaluation and must not be reported as research results.
 
 ---
 
 ## Do not claim
 
-- That these error numbers are research results — they are synthetic-trained.
-- That it forecasts. It nowcasts — it uses `sessions_started(t)` to predict hour `t`,
-  which is well-defined in a simulation but is not a forecast.
-- That the station positions are real.
+- That live simulator errors are research results; the values come from a
+  simulated rollout, not an untouched test-set evaluation.
+- That the model uses a leakage-safe historical arrival feature. It no longer uses
+  `sessions_started(t)`; by default it uses `sessions_started_lag24h` to predict
+  the target hour. The current-hour session count is excluded from model inputs.
+- That each mapped OSM station has its own observed historical demand. The
+  aggregate forecast and historical session profile are assigned across the
+  six controlled stations; no physical station-demand correspondence is
+  present in the datasets.
 - That the model beats persistence **on the real data**. That comparison has not
   been run — the simulation computes persistence live, but there is no offline
   baseline in the notebooks yet.

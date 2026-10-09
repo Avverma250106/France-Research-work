@@ -88,6 +88,36 @@ class FeatureBuffer:
         rows = feats.groupby("entity_id", as_index=False).tail(1).reset_index(drop=True)
         return self._restore_expanding(rows)
 
+    def feature_rows_for_next_hour(self):
+        """Build a causal forecast row one hour beyond the latest observation."""
+        hourly, sessions = self._frames()
+        if hourly.empty:
+            return None
+        next_hour = pd.to_datetime(hourly["hour"], utc=True).max() + pd.Timedelta(hours=1)
+        placeholders = pd.DataFrame(
+            [
+                (self.source_dataset, entity, entity, self.region, next_hour, 0.0)
+                for entity in self.entities
+            ],
+            columns=hourly.columns,
+        )
+        forecast_history = pd.concat([hourly, placeholders], ignore_index=True)
+        features = P.build_feature_table(forecast_history, sessions)
+        rows = features.loc[features["hour"] == next_hour].copy()
+        rows = rows.sort_values("entity_id").reset_index(drop=True)
+        if rows["entity_id"].astype(str).tolist() != sorted(map(str, self.entities)):
+            raise ValueError(
+                "Could not construct exactly one next-hour feature row per entity."
+            )
+        if "expanding_mean" in rows.columns:
+            values = []
+            for entity in rows["entity_id"]:
+                total, count = self.cum[entity]
+                values.append(float(total) / count if count >= 6 else np.nan)
+            rows["expanding_mean"] = values
+        P.validate_forecast_feature_leakage(rows)
+        return rows
+
     def _restore_expanding(self, rows):
         """Overwrite expanding_mean with the true running value.
 

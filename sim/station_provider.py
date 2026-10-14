@@ -93,17 +93,14 @@ DATASET_CONFIG = {
         ),
     },
     "acn": {
-        "label": "ACN sites (Pasadena, California)",
+        "label": "ACN sites (California)",
         "region": "California",
-        "timezone": "America/Los_Angeles",
-        "place_query": "Pasadena, California, United States",
-        "country_code": "us",
-        "profile_file": "acn_sessions.csv",
-        "profile_entity_id": "caltech",
+        "timezone": None,
+        "place_query": None,
+        "country_code": None,
         "location_note": (
-            "ACN-Data names its sites as Caltech and JPL, both in the Pasadena "
-            "area, so the place is documented rather than inferred. The third "
-            "entity (office001) is undisclosed and is not separately located."
+            "ACN contains multiple named campuses and an unresolved office entity; "
+            "the session files do not provide verified coordinates."
         ),
     },
     "sap": {

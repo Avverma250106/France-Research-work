@@ -78,8 +78,23 @@ class FeatureBuffer:
             })
         return hourly, sessions
 
-    def feature_rows(self):
-        """One feature row per entity, for the most recent hour in the buffer."""
+    def feature_rows(self, target_mode="nowcast"):
+        """One feature row per entity.
+
+        Rows are stamped at the most recent closed hour either way; the mode
+        says what the model does with them.
+
+        target_mode="nowcast"  predicts that same hour (the live map).
+        target_mode="forecast" predicts t+1 from them. The rows are the same;
+                               the parameter exists so forecast-mode callers
+                               read clearly and cannot pass a typo silently.
+                               Use feature_rows_for_next_hour() when a row
+                               stamped at t+1 is actually wanted.
+        """
+        if target_mode not in ("nowcast", "forecast"):
+            raise ValueError(
+                f"Unknown target_mode {target_mode!r}; use 'nowcast' or 'forecast'."
+            )
         hourly, sessions = self._frames()
         if hourly.empty:
             return None

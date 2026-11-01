@@ -53,7 +53,7 @@ ENTITIES = [
     ("palo_alto", "palo_alto",      "California", "public",      1.15),
     ("boulder",   "boulder",        "Colorado",   "public",      0.55),
     ("dundee",    "dundee",         "UK",         "public",      0.75),
-    ("perth",     "perth",          "Australia",  "public",      0.85),
+    ("perth",     "perth",          "UK",         "public",      0.85),
 ]
 
 

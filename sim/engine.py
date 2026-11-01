@@ -19,7 +19,9 @@ import pandas as pd
 from . import stations as st
 from . import synth
 from .demand_profiles import HistoricalDemandProfile
-from .features_rt import FeatureBuffer
+# KEEP_HOURS is re-exported: the engine owns the ring buffer, so callers
+# (and test_sim_forecast) reasonably look for the window length here.
+from .features_rt import KEEP_HOURS, FeatureBuffer
 from .mappo_runtime import MAPPOController
 from .roads import RoadNetwork
 from .station_provider import DATASET_CONFIG

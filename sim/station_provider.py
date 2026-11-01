@@ -78,14 +78,19 @@ DATASET_CONFIG = {
         "location_note": "Dundee-area stations; demand remains site-profile level.",
     },
     "perth": {
-        "label": "Perth, Western Australia",
-        "region": "Australia",
-        "timezone": "Australia/Perth",
-        "place_query": "Perth, Western Australia, Australia",
-        "country_code": "au",
+        "label": "Perth & Kinross, Scotland, UK",
+        "region": "UK",
+        "timezone": "Europe/London",
+        "place_query": "Perth, Perth and Kinross, Scotland, United Kingdom",
+        "country_code": "gb",
         "profile_file": "perth_sessions.csv",
         "profile_entity_id": "perth",
-        "location_note": "Perth-area stations; demand remains site-profile level.",
+        "location_note": (
+            "Perth & Kinross, SCOTLAND - not Perth, Western Australia. The "
+            "upstream open-data corpus lists this dataset as Perth & Kinross "
+            "(UK); region drives timezone and holiday calendar, so the "
+            "distinction changes every temporal feature."
+        ),
     },
     "acn": {
         "label": "ACN sites (California)",

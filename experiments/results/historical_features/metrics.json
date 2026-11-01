@@ -1,0 +1,79 @@
+{
+  "experiment": "historical_features",
+  "configuration": {
+    "added_session_history_features": [
+      "sessions_started_roll_mean_24h",
+      "sessions_started_roll_std_24h",
+      "sessions_started_roll_max_24h",
+      "sessions_started_roll_mean_168h",
+      "sessions_started_roll_std_168h",
+      "sessions_started_roll_max_168h"
+    ],
+    "reason": "summarize only session arrivals from completed hours"
+  },
+  "training_date_range": {
+    "start": "2011-08-05 20:00:00+00:00",
+    "end": "2019-08-27 01:00:00+00:00"
+  },
+  "validation_date_range": {
+    "start": "2019-08-27 02:00:00+00:00",
+    "end": "2020-06-11 05:00:00+00:00"
+  },
+  "test_date_range_reserved_not_evaluated": {
+    "start": "2020-06-11 06:00:00+00:00",
+    "end": "2021-04-12 21:00:00+00:00"
+  },
+  "n_training_rows": 176503,
+  "n_validation_rows": 44133,
+  "n_test_rows_reserved": 38942,
+  "metrics": {
+    "mae": 3.457650994393706,
+    "rmse": 8.478039087219582,
+    "r2": 0.942497305008758,
+    "wape": 19.659832723476377,
+    "active_hour_mae": 5.457973884811815,
+    "top_10pct_demand_mae": 15.485107878810004,
+    "top_1pct_demand_mae": 41.72511552039666,
+    "n_observations": 44133,
+    "active_hours": 27147,
+    "top_10pct_threshold_kwh": 67.57866538310981,
+    "top_1pct_threshold_kwh": 159.25203356683122,
+    "precision": 0.9569750850620129,
+    "recall": 0.9635318819759089,
+    "f1": 0.9602422907488987,
+    "threshold": 0.5,
+    "balanced_selection_score": 1.02161669939612
+  },
+  "model_parameters": {
+    "stage_1_classifier": {
+      "n_estimators": 500,
+      "learning_rate": 0.05,
+      "max_depth": 6,
+      "min_child_weight": 5,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "reg_alpha": 0.1,
+      "reg_lambda": 1.0,
+      "random_state": 42,
+      "n_jobs": 4,
+      "tree_method": "hist"
+    },
+    "stage_2_tweedie_regressor": {
+      "n_estimators": 500,
+      "learning_rate": 0.05,
+      "max_depth": 6,
+      "min_child_weight": 5,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "reg_alpha": 0.1,
+      "reg_lambda": 1.0,
+      "random_state": 42,
+      "n_jobs": 4,
+      "tree_method": "hist",
+      "objective": "reg:tweedie",
+      "tweedie_variance_power": 1.3
+    },
+    "threshold": 0.5
+  },
+  "random_seed": 42
+}

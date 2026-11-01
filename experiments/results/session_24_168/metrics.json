@@ -1,0 +1,73 @@
+{
+  "experiment": "session_24_168",
+  "configuration": {
+    "session_lags": "sessions_started_lag24h and sessions_started_lag168h",
+    "reason": "compare daily and weekly arrival cycles"
+  },
+  "training_date_range": {
+    "start": "2011-08-05 20:00:00+00:00",
+    "end": "2019-08-27 01:00:00+00:00"
+  },
+  "validation_date_range": {
+    "start": "2019-08-27 02:00:00+00:00",
+    "end": "2020-06-11 05:00:00+00:00"
+  },
+  "test_date_range_reserved_not_evaluated": {
+    "start": "2020-06-11 06:00:00+00:00",
+    "end": "2021-04-12 21:00:00+00:00"
+  },
+  "n_training_rows": 176503,
+  "n_validation_rows": 44133,
+  "n_test_rows_reserved": 38942,
+  "metrics": {
+    "mae": 3.4691045061520875,
+    "rmse": 8.62329773007209,
+    "r2": 0.9405099776413868,
+    "wape": 19.724956162953426,
+    "active_hour_mae": 5.482633956157182,
+    "top_10pct_demand_mae": 15.769622540312719,
+    "top_1pct_demand_mae": 43.43091795020395,
+    "n_observations": 44133,
+    "active_hours": 27147,
+    "top_10pct_threshold_kwh": 67.57866538310981,
+    "top_1pct_threshold_kwh": 159.25203356683122,
+    "precision": 0.9572949829838621,
+    "recall": 0.9636423914244668,
+    "f1": 0.9604582002423174,
+    "threshold": 0.5,
+    "balanced_selection_score": 1.0392110408093438
+  },
+  "model_parameters": {
+    "stage_1_classifier": {
+      "n_estimators": 500,
+      "learning_rate": 0.05,
+      "max_depth": 6,
+      "min_child_weight": 5,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "reg_alpha": 0.1,
+      "reg_lambda": 1.0,
+      "random_state": 42,
+      "n_jobs": 4,
+      "tree_method": "hist"
+    },
+    "stage_2_tweedie_regressor": {
+      "n_estimators": 500,
+      "learning_rate": 0.05,
+      "max_depth": 6,
+      "min_child_weight": 5,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "reg_alpha": 0.1,
+      "reg_lambda": 1.0,
+      "random_state": 42,
+      "n_jobs": 4,
+      "tree_method": "hist",
+      "objective": "reg:tweedie",
+      "tweedie_variance_power": 1.3
+    },
+    "threshold": 0.5
+  },
+  "random_seed": 42,
+  "selection_policy": "Equal-weight relative MAE across overall, active-hour, top-10%, and top-1%."
+}

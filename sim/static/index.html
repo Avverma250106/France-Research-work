@@ -112,11 +112,30 @@ tbody tr:last-child td{border-bottom:none}
           <option value="synthetic">SYNTHETIC · offline demo</option>
         </select>
       </label>
+      <label class="location-picker" for="strategy-select">
+        Allocation strategy
+        <select id="strategy-select" aria-label="Allocation strategy">
+          <option value="proportional">proportional</option>
+          <option value="mappo">mappo</option>
+        </select>
+      </label>
       <div class="clock" id="geography-note">Loading station source…</div>
       <div class="clock" id="clock">connecting…</div>
     </header>
 
     <div class="scroll">
+      <div class="block">
+        <h2>Allocation strategy</h2>
+        <div class="kv">
+          <div><span class="k">Current</span><span class="v" id="strategy-current">proportional</span></div>
+          <div><span class="k">Utilization</span><span class="v" id="strategy-utilization">—</span></div>
+          <div><span class="k">Grid used</span><span class="v" id="strategy-grid">—</span></div>
+          <div><span class="k">Actual served</span><span class="v" id="strategy-served">—</span></div>
+          <div><span class="k">Unserved</span><span class="v" id="strategy-unserved">—</span></div>
+          <div><span class="k">Reward</span><span class="v" id="strategy-reward">—</span></div>
+        </div>
+      </div>
+
       <div class="block">
         <h2>Rolling error · last 72 simulated hours</h2>
         <div class="vs">
@@ -341,6 +360,7 @@ function onHello(f) {
   activeMode = mode;
   const selector = $("dataset-select");
   $("mode-select").value = mode;
+  $("strategy-select").value = f.allocation_strategy || f.strategy || "proportional";
   if ([...selector.options].some(option => option.value === dataset)) {
     selector.value = dataset;
   }
@@ -431,8 +451,40 @@ $("mode-select").addEventListener("change", async () => {
   await switchSelection();
 });
 
+async function updateStrategySelection(strategy) {
+  const select = $("strategy-select");
+  if (!strategy || !["proportional", "mappo"].includes(strategy)) return;
+  select.value = strategy;
+  try {
+    const response = await fetch("/api/allocation-strategy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ strategy })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    select.value = result.strategy;
+  } catch (error) {
+    console.error("Could not select allocation strategy:", error);
+  }
+}
+
+$("strategy-select").addEventListener("change", () => {
+  void updateStrategySelection($("strategy-select").value);
+});
+
 function onHour(f) {
   const o = f.overall;
+  const strategy = f.strategy || f.controller || $("strategy-select").value || "proportional";
+  $("strategy-select").value = strategy;
+  $("strategy-current").textContent = strategy;
+  const metrics = (f.allocation && f.allocation.metrics) || {};
+  $("strategy-utilization").textContent = metrics.renewable_utilization !== undefined ? fmt(metrics.renewable_utilization, 2) : "—";
+  $("strategy-grid").textContent = metrics.grid_used !== undefined ? fmt(metrics.grid_used, 1) : "—";
+  $("strategy-served").textContent = metrics.actual_energy_served !== undefined ? fmt(metrics.actual_energy_served, 1) : "—";
+  $("strategy-unserved").textContent = metrics.actual_unserved !== undefined ? fmt(metrics.actual_unserved, 1) : "—";
+  $("strategy-reward").textContent = metrics.global_reward !== undefined ? fmt(metrics.global_reward, 2) : "—";
+
   $("m-mae").textContent = fmt(o.mae);
   $("p-mae").textContent = fmt(o.persistence_mae);
   $("m-rmse").textContent = fmt(o.rmse);

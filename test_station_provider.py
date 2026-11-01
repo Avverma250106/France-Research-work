@@ -513,3 +513,79 @@ def test_saved_mappo_checkpoint_runs_with_catalog_station_ids():
         set(action) == {"renewable", "grid"}
         for action in first["next_hour_plan"].values()
     )
+
+
+def test_engine_strategy_switch_resets_pending_action():
+    engine = sim_engine.Engine.__new__(sim_engine.Engine)
+    engine.allocation_strategy = "proportional"
+    engine._pending_allocation_action = {"s1": {"renewable": 2.0, "grid": 1.0}}
+    engine._pending_allocation_forecast = {"s1": 3.0}
+    engine._pending_strategy_metrics = {"strategy": "proportional"}
+
+    assert engine.set_allocation_strategy("mappo") == "mappo"
+    assert engine._pending_allocation_action is None
+    assert engine._pending_allocation_forecast is None
+    assert engine._pending_strategy_metrics is None
+
+
+@pytest.mark.parametrize("strategy", ["proportional", "mappo"])
+def test_first_strategy_step_initializes_environment_resources(strategy):
+    from marl.config import MARLConfig
+    from marl.environment import EnergyManagementEnv
+
+    station_ids = ("station-1",)
+    environment = EnergyManagementEnv(
+        MARLConfig(
+            station_ids=station_ids,
+            station_capacities={"station-1": 10.0},
+            renewable_availability=100.0,
+            grid_capacity=350.0,
+        )
+    )
+    action = {"station-1": {"renewable": 2.0, "grid": 1.0}}
+    controller = type(
+        "Controller",
+        (),
+        {
+            "station_ids": station_ids,
+            "capacities": {"station-1": 10.0},
+            "environment": environment,
+            "plan_action": lambda self, _current, _forecast: action,
+        },
+    )()
+    engine = sim_engine.Engine.__new__(sim_engine.Engine)
+    engine.mappo = controller
+    engine.allocation_strategy = strategy
+    engine._pending_allocation_action = None
+    engine._pending_allocation_forecast = None
+    engine._pending_strategy_metrics = None
+
+    executed_action, metrics = engine._execute_strategy_step(
+        {"station-1": 3.0},
+        {"station-1": 4.0},
+    )
+
+    assert environment.renewable_available == 100.0
+    assert environment.grid_capacity == 350.0
+    assert environment.current_grid_load == 0.0
+    assert executed_action == (action if strategy == "mappo" else {
+        "station-1": {"renewable": 4.0, "grid": 0.0}
+    })
+    assert metrics["strategy"] == strategy
+
+
+def test_allocation_strategy_route_updates_engine_runtime(monkeypatch):
+    engine = type(
+        "Engine",
+        (),
+        {"allocation_strategy": "proportional", "set_allocation_strategy": lambda self, strategy: setattr(self, "allocation_strategy", strategy) or strategy},
+    )()
+    monkeypatch.setitem(sim_server.state, "engine", engine)
+    monkeypatch.setattr(sim_server, "_broadcast", lambda payload: None)
+
+    response = asyncio.run(sim_server.select_allocation_strategy({"strategy": "mappo"}))
+
+    body = json.loads(response.body)
+    assert body["strategy"] == "mappo"
+    assert body["controller"] == "mappo"
+    assert engine.allocation_strategy == "mappo"

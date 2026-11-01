@@ -9,6 +9,7 @@ Run:  python3 -m uvicorn sim.server:app --port 8008
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import os
@@ -32,7 +33,8 @@ TICK = 0.1            # wall seconds between position frames
 MAX_TICK_ERRORS = 20  # consecutive failures before the loop gives up
 
 state = {"engine": None, "model": None, "clients": set(), "task": None,
-         "status": "starting", "error": None, "tick_errors": 0}
+         "status": "starting", "error": None, "tick_errors": 0,
+         "allocation_strategy": "proportional"}
 location_switch_lock = asyncio.Lock()
 
 
@@ -81,6 +83,10 @@ async def _broadcast(payload):
             await ws.send_text(msg)
         except Exception:
             state["clients"].discard(ws)
+
+
+def _select_strategy(engine):
+    return getattr(engine, "allocation_strategy", "proportional")
 
 
 async def _loop():
@@ -187,7 +193,8 @@ async def meta():
         "agent_ids": list(engine.mappo.station_ids),
         "station_source": engine.geography["station_source"],
         "demand_source": engine.geography["demand_source"],
-        "controller": "MAPPO",
+        "controller": engine.allocation_strategy,
+        "allocation_strategy": engine.allocation_strategy,
         "n_features": m.get("n_features"),
         "offline_metrics": m.get("metrics", {}),
         "n_sessions_trained": m.get("n_sessions"),
@@ -231,6 +238,35 @@ async def station_datasets(mode: str | None = None):
             }
             for dataset, config in DATASET_CONFIG.items()
         ],
+    })
+
+
+@app.post("/api/allocation-strategy")
+async def select_allocation_strategy(payload: dict):
+    engine = state["engine"]
+    if engine is None:
+        raise HTTPException(status_code=503, detail="The simulation engine is not available.")
+    strategy = str(payload.get("strategy", "")).strip().lower()
+    if strategy not in {"proportional", "mappo"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Strategy must be either 'proportional' or 'mappo'.",
+        )
+    engine.set_allocation_strategy(strategy)
+    msg = {
+        "type": "strategy",
+        "strategy": engine.allocation_strategy,
+        "controller": engine.allocation_strategy,
+        "allocation_strategy": engine.allocation_strategy,
+    }
+    result = _broadcast(msg)
+    if inspect.isawaitable(result):
+        await result
+    return JSONResponse({
+        "strategy": engine.allocation_strategy,
+        "controller": engine.allocation_strategy,
+        "allocation_strategy": engine.allocation_strategy,
+        "available": ["proportional", "mappo"],
     })
 
 
@@ -281,6 +317,9 @@ async def select_station_dataset(payload: dict):
             "agent_ids": list(new_engine.mappo.station_ids),
             "sim_hour_wall_seconds": SIM_HOUR_WALL_SECONDS,
             "routed": new_engine.routed,
+            "strategy": _select_strategy(new_engine),
+            "controller": _select_strategy(new_engine),
+            "allocation_strategy": _select_strategy(new_engine),
         }
         await _broadcast(hello)
     return JSONResponse({
@@ -318,6 +357,9 @@ async def ws_endpoint(ws: WebSocket):
             "agent_ids": list(engine.mappo.station_ids),
             "sim_hour_wall_seconds": SIM_HOUR_WALL_SECONDS,
             "routed": engine.routed,
+            "strategy": _select_strategy(engine),
+            "controller": _select_strategy(engine),
+            "allocation_strategy": _select_strategy(engine),
         }))
         if engine.last_frame:
             await ws.send_text(json.dumps(engine.last_frame))

@@ -80,6 +80,45 @@ class MAPPOController:
         point_count = max(1, int(station.get("n_points") or 1))
         return per_point_kw * point_count
 
+    def plan_action(
+        self,
+        current_demand: Mapping[str, float],
+        forecast: Mapping[str, float],
+    ) -> dict:
+        """Generate the next-hour allocation plan from the trained actor ensemble."""
+        if set(current_demand) != set(self.station_ids):
+            raise ValueError("Current demand IDs must match the selected station IDs.")
+        if set(forecast) != set(self.station_ids):
+            raise ValueError("Forecast IDs must match the selected station IDs.")
+
+        if not self._initialized:
+            observations, _ = self.environment.reset(
+                current_demand,
+                forecast,
+                renewable_available=RENEWABLE_AVAILABILITY_KWH,
+                grid_capacity=GRID_CAPACITY_KWH,
+                forecast_source="model",
+            )
+            self._initialized = True
+        else:
+            observations = self.environment.observe(
+                forecast, forecast_source="model"
+            )
+
+        local_observations = observations_to_array(
+            observations, self.station_ids, OBSERVATION_FIELDS
+        )
+        fractions = np.stack([
+            self.agent.act_local(index, local_observations[index], deterministic=True)
+            for index in range(MAX_STATIONS)
+        ])
+        action = fractions_to_environment_action(
+            fractions, self.station_ids, self.capacities
+        )
+        self._pending_forecast = dict(forecast)
+        self._pending_action = action
+        return action
+
     def advance(
         self,
         current_demand: Mapping[str, float],
@@ -113,18 +152,7 @@ class MAPPOController:
                 forecast, forecast_source="model"
             )
 
-        local_observations = observations_to_array(
-            observations, self.station_ids, OBSERVATION_FIELDS
-        )
-        fractions = np.stack([
-            self.agent.act_local(index, local_observations[index], deterministic=True)
-            for index in range(MAX_STATIONS)
-        ])
-        action = fractions_to_environment_action(
-            fractions, self.station_ids, self.capacities
-        )
-        self._pending_forecast = dict(forecast)
-        self._pending_action = action
+        action = self.plan_action(current_demand, forecast)
         completed_allocations = completed["allocations"] if completed else {}
         return {
             "station_count": len(self.station_ids),

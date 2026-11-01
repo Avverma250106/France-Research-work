@@ -16,6 +16,9 @@ from collections import deque
 import numpy as np
 import pandas as pd
 
+from marl.baseline import proportional_allocation
+from marl.config import MAX_STATIONS
+
 from . import stations as st
 from . import synth
 from .demand_profiles import HistoricalDemandProfile
@@ -25,7 +28,6 @@ from .features_rt import KEEP_HOURS, FeatureBuffer
 from .mappo_runtime import MAPPOController
 from .roads import RoadNetwork
 from .station_provider import DATASET_CONFIG
-from marl.config import MAX_STATIONS
 
 SIM_HOUR_WALL_SECONDS = 8.0        # 1 simulated hour per 8 wall seconds
 METRIC_WINDOW = 72                  # rolling window, in simulated hours
@@ -193,6 +195,11 @@ class Engine:
         self.mappo = MAPPOController(self.stations)
         if tuple(self.mappo.station_ids) != tuple(s["id"] for s in self.stations):
             raise ValueError("MAPPO agent IDs must exactly match map station IDs.")
+        self.allocation_strategy = "proportional"
+        self._pending_allocation_action = None
+        self._pending_allocation_forecast = None
+        self._pending_strategy_metrics = None
+        self._strategy_history = []
 
         self.buffer = FeatureBuffer(
             self.entities, source_dataset=source_dataset, region=region
@@ -248,6 +255,81 @@ class Engine:
         self.frame = 0
         self.last_frame = None
         self._schedule_hour(self.hour_start)
+
+    def set_allocation_strategy(self, strategy):
+        strategy_name = str(strategy).strip().lower()
+        if strategy_name not in {"proportional", "mappo"}:
+            raise ValueError("allocation strategy must be 'proportional' or 'mappo'.")
+        self.allocation_strategy = strategy_name
+        self._pending_allocation_action = None
+        self._pending_allocation_forecast = None
+        self._pending_strategy_metrics = None
+        return self.allocation_strategy
+
+    def _allocation_action(self, actual_by_station, forecast_by_station):
+        capacities = self.mappo.capacities
+        renewable_available = self.mappo.environment.renewable_available
+        grid_capacity = self.mappo.environment.grid_capacity
+        current_grid_load = self.mappo.environment.current_grid_load
+        if self.allocation_strategy == "proportional":
+            return proportional_allocation(
+                forecast_by_station,
+                station_capacities=capacities,
+                renewable_available=renewable_available,
+                grid_capacity=grid_capacity,
+                current_grid_load=current_grid_load,
+            )
+        if self.allocation_strategy == "mappo":
+            return self.mappo.plan_action(actual_by_station, forecast_by_station)
+        raise ValueError(f"Unsupported allocation strategy: {self.allocation_strategy!r}")
+
+    def _execute_strategy_step(self, actual_by_station, forecast_by_station):
+        if self._pending_allocation_action is None:
+            self.mappo.environment.reset(
+                actual_by_station,
+                forecast_by_station,
+                forecast_source="model",
+            )
+            action = self._allocation_action(actual_by_station, forecast_by_station)
+            self._pending_allocation_action = action
+            self._pending_allocation_forecast = dict(forecast_by_station)
+            self._pending_strategy_metrics = {
+                "strategy": self.allocation_strategy,
+                "actual_energy_served": 0.0,
+                "actual_unserved": 0.0,
+                "renewable_used": 0.0,
+                "grid_used": 0.0,
+                "renewable_utilization": 0.0,
+                "global_reward": 0.0,
+            }
+            return action, self._pending_strategy_metrics
+
+        rewards, _, info = self.mappo.environment.step(
+            self._pending_allocation_action,
+            self._pending_allocation_forecast,
+            lambda: dict(actual_by_station),
+            forecast_source="model",
+        )
+        action = self._allocation_action(actual_by_station, forecast_by_station)
+        self._pending_allocation_action = action
+        self._pending_allocation_forecast = dict(forecast_by_station)
+        self._pending_strategy_metrics = {
+            "strategy": self.allocation_strategy,
+            "actual_energy_served": float(info["actual_energy_served"]),
+            "actual_unserved": float(info["actual_unserved"]),
+            "renewable_used": float(info["renewable_used"]),
+            "grid_used": float(info["grid_used"]),
+            "renewable_utilization": (
+                float(info["renewable_used"]) / float(info["renewable_available"])
+                if float(info["renewable_available"]) > 0 else 0.0
+            ),
+            "global_reward": float(sum(rewards.values())),
+            "reward_components": info.get("reward_components", {}),
+            "allocations": info.get("allocations", {}),
+            "forecast": dict(forecast_by_station),
+            "actual_demand": dict(actual_by_station),
+        }
+        return action, self._pending_strategy_metrics
 
     # ---------- arrivals ----------
 
@@ -408,8 +490,43 @@ class Engine:
                 probs[e] = float(pr[i])
 
         forecast_by_station = self._forecast_next_station_demand()
-        mappo_frame = self.mappo.advance(actual_by_station, forecast_by_station)
-        mappo_frame["forecast_hour"] = h1.isoformat()
+        strategy_action, strategy_step = self._execute_strategy_step(
+            actual_by_station,
+            forecast_by_station,
+        )
+        mappo_frame = {
+            "station_count": len(self.mappo.station_ids),
+            "station_ids": list(self.mappo.station_ids),
+            "agent_ids": list(self.mappo.station_ids),
+            "forecast_demand": dict(forecast_by_station),
+            "current_demand": dict(actual_by_station),
+            "capacity_kwh": dict(self.mappo.capacities),
+            "capacity_source": dict(self.mappo.capacity_sources),
+            "renewable_availability_kwh": self.mappo.environment.renewable_available,
+            "grid_capacity_kwh": self.mappo.environment.grid_capacity,
+            "next_hour_plan": strategy_action,
+            "planned_renewable_request": {
+                station: allocation["renewable"]
+                for station, allocation in strategy_action.items()
+            },
+            "planned_grid_request": {
+                station: allocation["grid"]
+                for station, allocation in strategy_action.items()
+            },
+            "renewable_allocation": {
+                station: strategy_step.get("allocations", {}).get(station, {}).get("renewable", 0.0)
+                for station in self.mappo.station_ids
+            },
+            "grid_allocation": {
+                station: strategy_step.get("allocations", {}).get(station, {}).get("grid", 0.0)
+                for station in self.mappo.station_ids
+            },
+            "renewable_utilization": strategy_step.get("renewable_utilization"),
+            "completed_step": strategy_step,
+            "controller": self.allocation_strategy,
+            "strategy": self.allocation_strategy,
+            "forecast_hour": h1.isoformat(),
+        }
 
         site_frames = []
         for site in self.sites:
@@ -460,7 +577,13 @@ class Engine:
             "n_active_sessions": len(self.active),
             "station_source": self.geography["station_source"],
             "demand_source": self.geography["demand_source"],
-            "controller": "MAPPO",
+            "controller": self.allocation_strategy,
+            "strategy": self.allocation_strategy,
+            "allocation": {
+                "strategy": self.allocation_strategy,
+                "action": strategy_action,
+                "metrics": strategy_step,
+            },
             "mappo": mappo_frame,
         }
         return self.last_frame

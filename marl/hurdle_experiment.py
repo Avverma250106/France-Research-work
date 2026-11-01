@@ -156,6 +156,10 @@ class HurdleForecastAdapter:
         if rows is None or len(rows) != len(self.station_ids):
             raise ValueError("Could not produce exactly one feature row per station.")
         rows = rows.sort_values("entity_id").reset_index(drop=True)
+        if "target" not in rows.columns:
+            rows["target"] = np.nan
+        if not rows["target"].isna().all():
+            raise ValueError("Forecast rows cannot include observed target values.")
         expected_entities = set(self.station_to_entity.values())
         if set(rows["entity_id"].astype(str)) != expected_entities:
             raise ValueError("Feature rows do not match the configured station entities.")

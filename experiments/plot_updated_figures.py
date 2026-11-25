@@ -1,4 +1,4 @@
-"""Create publication-ready figures from saved leakage-safe experiment results."""
+"""Create publication-ready figures from saved experiment results."""
 
 import csv
 import json
@@ -126,14 +126,14 @@ def figure_1_experiment_comparison(table):
     _metric_bars(
         mae_rows,
         "Validation MAE (kWh)",
-        "Validation Performance Across Leakage-Safe Experiments",
+        "Validation Performance Across Experiments",
         "fig1_validation_experiment_mae.png",
         "kWh",
     )
     _metric_bars(
         rmse_rows,
         "Validation RMSE (kWh)",
-        "Validation RMSE Across Leakage-Safe Experiments",
+        "Validation RMSE Across Experiments",
         "fig1b_validation_experiment_rmse.png",
         "kWh",
     )
@@ -172,7 +172,7 @@ def figure_2_final_vs_baseline():
                 fontsize=8,
             )
     fig.suptitle(
-        "Final Leakage-Safe Model vs 24h Baseline (Untouched Test)",
+        "Final Model vs 24h Baseline",
         y=1.03,
         fontsize=11,
         weight="bold",
@@ -224,7 +224,7 @@ def figure_3_feature_importance():
     ax.set_yticks(positions, labels)
     ax.set_xlabel("Normalized gain importance (%)")
     ax.set_title(
-        "Final Leakage-Safe Hurdle-XGBoost Feature Importance",
+        "Final Hurdle-XGBoost Feature Importance",
         pad=10,
         weight="bold",
     )
@@ -274,7 +274,7 @@ untouched test set was not rescored.
 
 | Figure filename | What it shows | Exact source data | Split / model | Replaces old paper figure? |
 |---|---|---|---|---|
-| `fig1_validation_experiment_mae.png` | Validation MAE for the seven supplied leakage-safe experiment configurations. | `../experiment_table.csv` (`MAE` rows: `baseline_24h`, `session_168h`, `session_24_168`, `session_roll_means`, `same_hour_demand`, `tweedie_power_1.2`, `threshold_tuned`). | Chronological validation; contains candidate experiments, not solely the final model. | No; experiment comparison. |
+| `fig1_validation_experiment_mae.png` | Validation MAE for the seven supplied experiment configurations. | `../experiment_table.csv` (`MAE` rows: `baseline_24h`, `session_168h`, `session_24_168`, `session_roll_means`, `same_hour_demand`, `tweedie_power_1.2`, `threshold_tuned`). | Chronological validation; contains candidate experiments, not solely the final model. | No; experiment comparison. |
 | `fig1b_validation_experiment_rmse.png` | Validation RMSE for the same seven configurations. | `../experiment_table.csv` (`RMSE` for the same rows). | Chronological validation; candidate experiments. | No; supplementary experiment comparison. |
 | `fig2_final_model_vs_baseline_test.png` | Separate MAE, RMSE and WAPE panels for the 24h baseline and selected model. | `../final/metrics.json`: saved baseline values and `test_metrics`. | Baseline values previously reported; final selected model, untouched test. | Yes; use for any old final-model-vs-baseline test-performance figure. |
 | `fig3_feature_importance_updated.png` | Grouped Stage 1/Stage 2 normalized gain for important demand, session-arrival and same-hour features. Every final `sessions_started*` and `same_hour_*` feature is included. | `../final/feature_importance.json`. | Final selected Hurdle-XGBoost; importance from final trained models. | **Yes; replaces old Figure 3.** |
@@ -295,7 +295,7 @@ show saved aggregate metrics and importance only.
 ## Old paper figures
 
 - **Replace Figure 3**: its cited contemporaneous `sessions_started`
-  importance is invalid for the leakage-safe model.
+  importance is invalid for the model.
 - **Replace old final-model test/error plots** with Figures 2 and 4 when they
   describe the superseded model.
 - **Old Figure 2 (temporal CV) must not be reused as new-model validation.**
@@ -321,7 +321,7 @@ show saved aggregate metrics and importance only.
   historical rolling features. It excludes contemporaneous `sessions_started`.
 - Figure 1 / 1b show validation scores; Figures 2 / 4 show test metrics. The
   split types are not combined on one graph.
-- `data.ipynb` contains leakage-safe updated feature-building code, but its
+- `data.ipynb` contains updated feature-building code, but its
   stored outputs still show a `sessions_started` column. Re-execute/clear those
   stale notebook outputs before using them as evidence.
 - Do not cite the old `hurdle_model_cv.ipynb` output as the final selected

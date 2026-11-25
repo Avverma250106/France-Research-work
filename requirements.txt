@@ -16,3 +16,4 @@ networkx>=3.0           # local street routing over the cached OSM graph
 
 # MARL (marl/, sim/mappo_runtime.py)
 torch>=2.0
+matplotlib
